@@ -92,7 +92,7 @@ async function handleMessage(ctx: Context): Promise<void> {
 
   // Skip forwarded bot-generated posts (tagged with #bot) and commands
   if (msg.forward_origin) {
-    const text = msg.text || '';
+    const text = msg.text || msg.caption || '';
     if (text.startsWith('/') || text.includes('#bot')) return;
   }
 

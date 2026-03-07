@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { config } from './config.js';
 import { createBot } from './bot.js';
 import { startScheduler } from './services/scheduler.js';
@@ -52,6 +53,20 @@ async function checkAnthropicKey(): Promise<string> {
   }
 }
 
+function getServerInfo(): string {
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const usedMem = totalMem - freeMem;
+  const fmt = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(0)}MB`;
+  const cpus = os.cpus();
+  const load = os.loadavg();
+  const upDays = (os.uptime() / 86400).toFixed(1);
+  return [
+    `Server: ${fmt(usedMem)}/${fmt(totalMem)} RAM, ${cpus.length} CPU (${cpus[0].model.trim()})`,
+    `Load: ${load.map(l => l.toFixed(2)).join(' ')} | Uptime: ${upDays}d`,
+  ].join('\n');
+}
+
 async function main() {
   console.log('CBT Bot starting...');
   console.log(`  Language: ${config.language}`);
@@ -94,6 +109,8 @@ async function main() {
           elevenLabs,
           openai,
           anthropic,
+          '',
+          getServerInfo(),
           '',
           '#bot',
         ];

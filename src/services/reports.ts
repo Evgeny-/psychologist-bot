@@ -46,7 +46,8 @@ function buildDaySummaries(start: string, end: string): DaySummary[] {
       const m: string[] = [];
       if (dayMetrics.mood !== null) m.push(`mood=${dayMetrics.mood}`);
       if (dayMetrics.anxiety !== null) m.push(`anxiety=${dayMetrics.anxiety}`);
-      if (dayMetrics.energy !== null) m.push(`energy=${dayMetrics.energy}`);
+      if (dayMetrics.self_esteem !== null) m.push(`self_esteem=${dayMetrics.self_esteem}`);
+      if (dayMetrics.productivity !== null) m.push(`productivity=${dayMetrics.productivity}`);
       if (m.length) metricsStr = m.join(', ');
     }
 

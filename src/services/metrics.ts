@@ -3,7 +3,8 @@ import { t } from '../i18n/index.js';
 export interface ParsedMetrics {
   mood?: number;
   anxiety?: number;
-  energy?: number;
+  self_esteem?: number;
+  productivity?: number;
   custom: Record<string, number>;
 }
 
@@ -15,7 +16,8 @@ export function parseMetrics(text: string): ParsedMetrics {
 
   result.mood = findMetricValue(lower, patterns.mood);
   result.anxiety = findMetricValue(lower, patterns.anxiety);
-  result.energy = findMetricValue(lower, patterns.energy);
+  result.self_esteem = findMetricValue(lower, patterns.self_esteem);
+  result.productivity = findMetricValue(lower, patterns.productivity);
 
   return result;
 }
@@ -35,5 +37,5 @@ function findMetricValue(text: string, aliases: readonly string[]): number | und
 }
 
 export function hasAnyMetrics(metrics: ParsedMetrics): boolean {
-  return metrics.mood !== undefined || metrics.anxiety !== undefined || metrics.energy !== undefined;
+  return metrics.mood !== undefined || metrics.anxiety !== undefined || metrics.self_esteem !== undefined || metrics.productivity !== undefined;
 }

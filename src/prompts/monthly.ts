@@ -10,7 +10,7 @@ const MONTHLY_SYSTEM_PROMPT_RU = `Ты — психолог-помощник (К
 Подготовь месячный отчёт на русском языке:
 
 1. **Обзор месяца** — общая динамика, ключевые события (3-4 предложения)
-2. **Тренды метрик** — как менялись настроение, тревога, энергия по неделям
+2. **Тренды метрик** — как менялись настроение, тревога, самооценка, продуктивность по неделям
 3. **Прогресс** — стали ли когнитивные искажения реже? Какие остаются?
 4. **Главные темы** — что занимало мысли больше всего
 5. **Достижения** — что было сделано, на что можно обратить внимание с гордостью
@@ -25,7 +25,7 @@ const MONTHLY_SYSTEM_PROMPT_EN = `You are a CBT psychology assistant. You are gi
 Prepare a monthly report in English:
 
 1. **Month overview** — overall dynamics, key events (3-4 sentences)
-2. **Metric trends** — how mood, anxiety, energy changed week by week
+2. **Metric trends** — how mood, anxiety, self-esteem, productivity changed week by week
 3. **Progress** — are cognitive distortions becoming less frequent? Which ones persist?
 4. **Main themes** — what occupied thoughts the most
 5. **Achievements** — what was accomplished, what to be proud of

@@ -20,7 +20,13 @@ const DAILY_SYSTEM_PROMPT_RU = `Ты — психолог-помощник, ра
   "gratitude": ["позитивный момент 1", "..."],
   "action_items": ["дело 1", "..."],
   "topics": ["тема1", "тема2"],
-  "gratitude_count": число
+  "gratitude_count": число,
+  "metrics": {
+    "mood": число от 0 до 10 или null,
+    "anxiety": число от 0 до 10 или null,
+    "self_esteem": число от 0 до 10 или null,
+    "productivity": число от 0 до 10 или null
+  }
 }
 
 После JSON-блока напиши анализ в свободной форме на русском языке:
@@ -41,6 +47,14 @@ const DAILY_SYSTEM_PROMPT_RU = `Ты — психолог-помощник, ра
 - Персонализация
 - Эмоциональное обоснование
 - Навешивание ярлыков
+
+Поле "metrics": оцени эмоциональное состояние пользователя на основе содержания записи.
+- mood: общее настроение (0 = ужасное, 10 = отличное)
+- anxiety: уровень тревоги (0 = нет тревоги, 10 = паника)
+- self_esteem: самооценка (0 = "я ничтожество", 10 = "я молодец, горжусь собой")
+- productivity: продуктивность (0 = ничего не сделал, 10 = всё успел и даже больше)
+Если из текста невозможно определить какую-то метрику — поставь null.
+Если пользователь явно назвал число — используй его. Иначе определи по контексту.
 
 Если перед текущей записью есть предыдущие записи за сегодня — они даны для контекста.
 Используй их чтобы увидеть общую картину дня, но анализируй только ТЕКУЩУЮ запись.
@@ -63,7 +77,13 @@ You MUST return a JSON object in a \`\`\`json ... \`\`\` block with this structu
   "gratitude": ["positive moment 1", "..."],
   "action_items": ["item 1", "..."],
   "topics": ["topic1", "topic2"],
-  "gratitude_count": number
+  "gratitude_count": number,
+  "metrics": {
+    "mood": number 0-10 or null,
+    "anxiety": number 0-10 or null,
+    "self_esteem": number 0-10 or null,
+    "productivity": number 0-10 or null
+  }
 }
 
 After the JSON block, write a free-form analysis in English:
@@ -84,6 +104,14 @@ Cognitive distortions to track:
 - Personalization
 - Emotional reasoning
 - Labeling
+
+The "metrics" field: assess the user's emotional state based on the entry content.
+- mood: overall mood (0 = terrible, 10 = excellent)
+- anxiety: anxiety level (0 = no anxiety, 10 = panic)
+- self_esteem: self-esteem (0 = "I'm worthless", 10 = "I'm great, proud of myself")
+- productivity: productivity (0 = did nothing, 10 = accomplished everything and more)
+If a metric cannot be determined from the text — set it to null.
+If the user explicitly stated a number — use it. Otherwise infer from context.
 
 If there are earlier entries from today before the current one — they are provided for context.
 Use them to see the bigger picture of the day, but only analyze the CURRENT entry.

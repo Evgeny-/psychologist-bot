@@ -21,14 +21,16 @@ export interface Strings {
   statsTotalEntries: string;
   statsAvgMood: string;
   statsAvgAnxiety: string;
-  statsAvgEnergy: string;
+  statsAvgSelfEsteem: string;
+  statsAvgProductivity: string;
   statsNoMetrics: string;
   statsMetricsForDays: string;
   exportEmpty: string;
   metricsPatterns: {
     mood: readonly string[];
     anxiety: readonly string[];
-    energy: readonly string[];
+    self_esteem: readonly string[];
+    productivity: readonly string[];
   };
 }
 

@@ -28,6 +28,15 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
     }
   }
 
+  // Migration: add self_esteem and productivity columns to metrics
+  const hasSelfEsteem = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('metrics') WHERE name='self_esteem'").get() as { cnt: number };
+  if (hasSelfEsteem.cnt === 0) {
+    try {
+      db.exec("ALTER TABLE metrics ADD COLUMN self_esteem INTEGER CHECK(self_esteem BETWEEN 0 AND 10)");
+      db.exec("ALTER TABLE metrics ADD COLUMN productivity INTEGER CHECK(productivity BETWEEN 0 AND 10)");
+    } catch { /* table may not exist yet */ }
+  }
+
   // Migration: add local_time column to entries
   const hasLocalTime = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('entries') WHERE name='local_time'").get() as { cnt: number };
   if (hasLocalTime.cnt === 0) {
@@ -69,6 +78,8 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
       mood INTEGER CHECK(mood BETWEEN 0 AND 10),
       anxiety INTEGER CHECK(anxiety BETWEEN 0 AND 10),
       energy INTEGER CHECK(energy BETWEEN 0 AND 10),
+      self_esteem INTEGER CHECK(self_esteem BETWEEN 0 AND 10),
+      productivity INTEGER CHECK(productivity BETWEEN 0 AND 10),
       custom_json TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );

@@ -14,6 +14,19 @@ interface AnalysisResult {
   action_items?: string[];
   topics?: string[];
   gratitude_count?: number;
+  metrics?: {
+    mood?: number | null;
+    anxiety?: number | null;
+    self_esteem?: number | null;
+    productivity?: number | null;
+  };
+}
+
+export interface ExtractedMetrics {
+  mood?: number;
+  anxiety?: number;
+  self_esteem?: number;
+  productivity?: number;
 }
 
 function parseAnalysisJson(text: string): AnalysisResult | null {
@@ -31,7 +44,18 @@ function extractFreeformAnalysis(text: string): string {
   return afterJson || text;
 }
 
-function saveAnalysis(entryId: number, responseText: string, llm: LLMProvider): void {
+function extractMetrics(parsed: AnalysisResult | null): ExtractedMetrics {
+  const m = parsed?.metrics;
+  if (!m) return {};
+  const result: ExtractedMetrics = {};
+  if (typeof m.mood === 'number' && m.mood >= 0 && m.mood <= 10) result.mood = m.mood;
+  if (typeof m.anxiety === 'number' && m.anxiety >= 0 && m.anxiety <= 10) result.anxiety = m.anxiety;
+  if (typeof m.self_esteem === 'number' && m.self_esteem >= 0 && m.self_esteem <= 10) result.self_esteem = m.self_esteem;
+  if (typeof m.productivity === 'number' && m.productivity >= 0 && m.productivity <= 10) result.productivity = m.productivity;
+  return result;
+}
+
+function saveAnalysis(entryId: number, responseText: string, llm: LLMProvider): ExtractedMetrics {
   const parsed = parseAnalysisJson(responseText);
   const freeform = extractFreeformAnalysis(responseText);
 
@@ -46,11 +70,23 @@ function saveAnalysis(entryId: number, responseText: string, llm: LLMProvider): 
     llm_provider: llm.providerName,
     llm_model: llm.modelName,
   });
+
+  return extractMetrics(parsed);
 }
 
 function formatUsage(usage?: LLMUsage): string {
   if (!usage) return '';
   return ` | ${usage.inputTokens}in/${usage.outputTokens}out | $${usage.costUsd.toFixed(5)}`;
+}
+
+function formatMetricsLine(metrics: ExtractedMetrics): string {
+  const parts: string[] = [];
+  if (metrics.mood !== undefined) parts.push(`настроение: ${metrics.mood}`);
+  if (metrics.anxiety !== undefined) parts.push(`тревога: ${metrics.anxiety}`);
+  if (metrics.self_esteem !== undefined) parts.push(`самооценка: ${metrics.self_esteem}`);
+  if (metrics.productivity !== undefined) parts.push(`продуктивность: ${metrics.productivity}`);
+  if (parts.length === 0) return '';
+  return `\n<blockquote>📊 ${parts.join(' | ')}</blockquote>`;
 }
 
 function buildUserPromptWithContext(text: string, date: string, entryId: number): string {
@@ -81,7 +117,7 @@ export async function analyzeEntry(
   threadId: number,
   replyToMessageId?: number,
   date?: string,
-): Promise<void> {
+): Promise<ExtractedMetrics> {
   const systemPrompt = getDailySystemPrompt(config.language);
   const entryDate = date || todayLocal();
   const userPrompt = buildUserPromptWithContext(text, entryDate, entryId);
@@ -94,14 +130,13 @@ export async function analyzeEntry(
   });
 
   if (config.compareMode) {
-    await analyzeCompare(api, chatId, entryId, userPrompt, systemPrompt, threadId, replyToMessageId);
-    return;
+    return analyzeCompare(api, chatId, entryId, userPrompt, systemPrompt, threadId, replyToMessageId);
   }
 
   const llm = createLLMProvider();
   const result = await llm.analyze(userPrompt, systemPrompt);
 
-  saveAnalysis(entryId, result.text, llm);
+  const metrics = saveAnalysis(entryId, result.text, llm);
 
   // Save analysis as assistant message in thread
   const freeform = extractFreeformAnalysis(result.text);
@@ -116,7 +151,9 @@ export async function analyzeEntry(
   const costInfo = result.usage ? ` | $${result.usage.costUsd.toFixed(5)}` : '';
   const meta = `<blockquote>${t().analysisHeader}${costInfo}</blockquote>`;
   const body = markdownToHtml(freeform);
-  await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}`, replyToMessageId);
+  const metricsLine = formatMetricsLine(metrics);
+  await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}${metricsLine}`, replyToMessageId);
+  return metrics;
 }
 
 async function analyzeCompare(
@@ -127,7 +164,7 @@ async function analyzeCompare(
   systemPrompt: string,
   threadId: number,
   replyToMessageId?: number,
-): Promise<void> {
+): Promise<ExtractedMetrics> {
   const providers = createAllLLMProviders();
 
   const results = await Promise.allSettled(
@@ -140,6 +177,7 @@ async function analyzeCompare(
   );
 
   let threadSaved = false;
+  let firstMetrics: ExtractedMetrics = {};
 
   for (let i = 0; i < results.length; i++) {
     const settled = results[i];
@@ -148,7 +186,11 @@ async function analyzeCompare(
 
     if (settled.status === 'fulfilled') {
       const { result, llm, elapsed } = settled.value;
-      saveAnalysis(entryId, result.text, llm);
+      const metrics = saveAnalysis(entryId, result.text, llm);
+
+      if (!threadSaved) {
+        firstMetrics = metrics;
+      }
 
       const freeform = extractFreeformAnalysis(result.text);
 
@@ -165,10 +207,13 @@ async function analyzeCompare(
       }
       const meta = `<blockquote>${label} | ${elapsed}s${formatUsage(result.usage)}</blockquote>`;
       const body = markdownToHtml(freeform);
-      await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}`, replyToMessageId);
+      const metricsLine = formatMetricsLine(metrics);
+      await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}${metricsLine}`, replyToMessageId);
     } else {
       const errMsg = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
       await sendRawHtmlMessages(api, chatId, `<blockquote>${label}</blockquote>\n\nError: ${errMsg}`, replyToMessageId);
     }
   }
+
+  return firstMetrics;
 }

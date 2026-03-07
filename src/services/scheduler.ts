@@ -3,19 +3,16 @@ import type { Api } from 'grammy';
 import { config } from '../config.js';
 import { queries } from '../db/index.js';
 import { t } from '../i18n/index.js';
+import { todayLocal } from '../utils/date.js';
 import { generateWeeklyReport, generateMonthlyReport } from './reports.js';
-
-function formatDate(d: Date): string {
-  return d.toISOString().split('T')[0];
-}
 
 function daysSinceLastEntry(): number {
   const lastDate = queries.getLastEntryDate();
   if (!lastDate) return 999;
-  const last = new Date(lastDate);
-  const now = new Date();
-  const diff = Math.floor((now.getTime() - last.getTime()) / (1000 * 60 * 60 * 24));
-  return diff;
+  const today = todayLocal();
+  const lastMs = new Date(lastDate + 'T00:00:00').getTime();
+  const todayMs = new Date(today + 'T00:00:00').getTime();
+  return Math.floor((todayMs - lastMs) / (1000 * 60 * 60 * 24));
 }
 
 export function startScheduler(api: Api): void {
@@ -28,17 +25,22 @@ export function startScheduler(api: Api): void {
   // Daily reminder at 20:30 → group
   cron.schedule('30 20 * * *', async () => {
     try {
-      const today = formatDate(new Date());
+      const today = todayLocal();
       if (queries.hasEntryForDate(today)) return;
 
       const days = daysSinceLastEntry();
       const strings = t();
+      const streak = queries.getStreak();
 
       let message: string;
       if (days <= 1) {
         message = strings.reminderDay1;
       } else {
         message = strings.reminderDay2plus.replace('{days}', String(days));
+      }
+
+      if (streak > 0) {
+        message += `\n\n${strings.streakInfo.replace('{streak}', String(streak))}`;
       }
 
       await api.sendMessage(reminderChatId, message);

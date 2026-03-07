@@ -6,15 +6,10 @@ import { config } from '../config.js';
 import { t } from '../i18n/index.js';
 import { queries } from '../db/index.js';
 import { sendSplitMessages, sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
-
-const llm = createLLMProvider();
+import { formatDateLocal } from '../utils/date.js';
 
 // ~400k chars ≈ 100k tokens — keeps us under Sonnet's 200k limit with room for system prompt + response
 const MAX_CONTEXT_CHARS = 400_000;
-
-function formatDate(d: Date): string {
-  return d.toISOString().split('T')[0];
-}
 
 // Get Monday of the current week
 function getMonday(d: Date): Date {
@@ -244,7 +239,7 @@ export async function generateWeeklyReport(api: Api, chatId: number): Promise<vo
   end.setDate(end.getDate() - 1);
   const start = new Date(end);
   start.setDate(start.getDate() - 6);
-  await runWeeklyReport(api, chatId, formatDate(start), formatDate(end), 'weekly');
+  await runWeeklyReport(api, chatId, formatDateLocal(start), formatDateLocal(end), 'weekly');
 }
 
 // Scheduled: previous full month
@@ -252,19 +247,19 @@ export async function generateMonthlyReport(api: Api, chatId: number): Promise<v
   const now = new Date();
   const end = new Date(now.getFullYear(), now.getMonth(), 0);
   const start = new Date(end.getFullYear(), end.getMonth(), 1);
-  await runMonthlyReport(api, chatId, formatDate(start), formatDate(end), 'monthly');
+  await runMonthlyReport(api, chatId, formatDateLocal(start), formatDateLocal(end), 'monthly');
 }
 
 // Command: current week so far (Monday → today)
 export async function generateTestWeeklyReport(api: Api, chatId: number): Promise<void> {
   const now = new Date();
   const monday = getMonday(now);
-  await runWeeklyReport(api, chatId, formatDate(monday), formatDate(now), 'test_weekly');
+  await runWeeklyReport(api, chatId, formatDateLocal(monday), formatDateLocal(now), 'test_weekly');
 }
 
 // Command: current month so far (1st → today)
 export async function generateTestMonthlyReport(api: Api, chatId: number): Promise<void> {
   const now = new Date();
   const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-  await runMonthlyReport(api, chatId, formatDate(firstDay), formatDate(now), 'test_monthly');
+  await runMonthlyReport(api, chatId, formatDateLocal(firstDay), formatDateLocal(now), 'test_monthly');
 }

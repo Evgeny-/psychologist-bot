@@ -15,6 +15,16 @@ export interface Strings {
   weeklyReportTitle: string;
   monthlyReportTitle: string;
   metricsAsk: string;
+  streakInfo: string;
+  statsHeader: string;
+  statsStreak: string;
+  statsTotalEntries: string;
+  statsAvgMood: string;
+  statsAvgAnxiety: string;
+  statsAvgEnergy: string;
+  statsNoMetrics: string;
+  statsMetricsForDays: string;
+  exportEmpty: string;
   metricsPatterns: {
     mood: readonly string[];
     anxiety: readonly string[];

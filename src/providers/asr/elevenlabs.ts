@@ -1,4 +1,5 @@
 import type { ASRProvider } from './index.js';
+import { withRetry } from '../../utils/retry.js';
 
 // $0.40/hour = $0.00667/min for scribe_v2
 const ELEVENLABS_COST_PER_MINUTE = 0.00667;
@@ -17,13 +18,13 @@ export class ElevenLabsASR implements ASRProvider {
     formData.append('model_id', this.model);
     formData.append('language_code', lang);
 
-    const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+    const response = await withRetry(() => fetch('https://api.elevenlabs.io/v1/speech-to-text', {
       method: 'POST',
       headers: {
         'xi-api-key': this.apiKey,
       },
       body: formData,
-    });
+    }));
 
     if (!response.ok) {
       const errorText = await response.text();

@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import type { ASRProvider } from './index.js';
 import { ApiBalanceError } from './elevenlabs.js';
+import { withRetry } from '../../utils/retry.js';
 
 const OPENAI_ASR_PRICING: Record<string, number> = {
   'gpt-4o-transcribe': 0.006,
@@ -24,11 +25,11 @@ export class OpenAIASR implements ASRProvider {
     try {
       const file = new File([new Uint8Array(audioBuffer)], 'audio.ogg', { type: 'audio/ogg' });
 
-      const response = await this.client.audio.transcriptions.create({
+      const response = await withRetry(() => this.client.audio.transcriptions.create({
         file,
         model: this.model,
         language: lang,
-      });
+      }));
 
       // The response shape varies by model - handle both
       if (typeof response === 'string') return response;

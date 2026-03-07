@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { LLMProvider, LLMResult, ChatMessage } from './index.js';
+import { withRetry } from '../../utils/retry.js';
 
 // Pricing per million tokens
 const CLAUDE_PRICING: Record<string, { input: number; output: number }> = {
@@ -38,12 +39,12 @@ export class ClaudeLLM implements LLMProvider {
 
   async chat(messages: ChatMessage[], systemPrompt: string): Promise<LLMResult> {
     try {
-      const response = await this.client.messages.create({
+      const response = await withRetry(() => this.client.messages.create({
         model: this.model,
         max_tokens: 4096,
         system: systemPrompt,
         messages,
-      });
+      }));
 
       const text = response.content
         .filter((block) => block.type === 'text')

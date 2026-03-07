@@ -9,6 +9,7 @@ export interface EntryRow {
   raw_text: string | null;
   transcript: string | null;
   duration_seconds: number | null;
+  local_time: string | null;
   created_at: string;
 }
 
@@ -69,10 +70,11 @@ export class Queries {
     raw_text?: string;
     transcript?: string;
     duration_seconds?: number;
+    local_time?: string;
   }): number {
     const stmt = this.db.prepare(`
-      INSERT INTO entries (telegram_message_id, channel_post_id, date, type, raw_text, transcript, duration_seconds)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO entries (telegram_message_id, channel_post_id, date, type, raw_text, transcript, duration_seconds, local_time)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       entry.telegram_message_id,
@@ -82,6 +84,7 @@ export class Queries {
       entry.raw_text ?? null,
       entry.transcript ?? null,
       entry.duration_seconds ?? null,
+      entry.local_time ?? null,
     );
     return result.lastInsertRowid as number;
   }
@@ -251,9 +254,88 @@ export class Queries {
     return map;
   }
 
+  getEarlierEntriesForDate(date: string, excludeEntryId: number): Array<{ transcript: string | null; raw_text: string | null; analysis_text: string | null }> {
+    return this.db.prepare(`
+      SELECT e.transcript, e.raw_text,
+        (SELECT a.analysis_text FROM analyses a WHERE a.entry_id = e.id ORDER BY a.created_at ASC LIMIT 1) as analysis_text
+      FROM entries e
+      WHERE e.date = ? AND e.id != ?
+      ORDER BY e.created_at ASC
+    `).all(date, excludeEntryId) as Array<{ transcript: string | null; raw_text: string | null; analysis_text: string | null }>;
+  }
+
   getReportsByDateRange(type: string, start: string, end: string): ReportRow[] {
     return this.db.prepare(
       'SELECT * FROM reports WHERE type = ? AND period_start >= ? AND period_end <= ? ORDER BY period_start ASC'
     ).all(type, start, end) as ReportRow[];
+  }
+
+  /** Count consecutive days with entries ending at `today` */
+  getStreak(today?: string): number {
+    const rows = this.db.prepare(
+      'SELECT DISTINCT date FROM entries ORDER BY date DESC'
+    ).all() as { date: string }[];
+
+    if (rows.length === 0) return 0;
+
+    let streak = 0;
+    const startDate = today ? new Date(today + 'T00:00:00') : new Date(rows[0].date + 'T00:00:00');
+    const dateSet = new Set(rows.map((r) => r.date));
+
+    for (let i = 0; i < 365; i++) {
+      const d = new Date(startDate);
+      d.setDate(d.getDate() - i);
+      const ds = d.toISOString().split('T')[0];
+      if (dateSet.has(ds)) {
+        streak++;
+      } else {
+        break;
+      }
+    }
+    return streak;
+  }
+
+  /** Total number of entries */
+  getTotalEntries(): number {
+    const row = this.db.prepare('SELECT COUNT(*) as cnt FROM entries').get() as { cnt: number };
+    return row.cnt;
+  }
+
+  /** Average metrics for a date range */
+  getAverageMetrics(start: string, end: string): { avgMood: number | null; avgAnxiety: number | null; avgEnergy: number | null; count: number } {
+    const row = this.db.prepare(`
+      SELECT AVG(mood) as avgMood, AVG(anxiety) as avgAnxiety, AVG(energy) as avgEnergy, COUNT(*) as count
+      FROM metrics WHERE date >= ? AND date <= ? AND (mood IS NOT NULL OR anxiety IS NOT NULL OR energy IS NOT NULL)
+    `).get(start, end) as { avgMood: number | null; avgAnxiety: number | null; avgEnergy: number | null; count: number };
+    return row;
+  }
+
+  /** Get all entries with their metrics for CSV export */
+  getExportData(start?: string, end?: string): Array<{
+    date: string;
+    local_time: string | null;
+    type: string;
+    text: string | null;
+    mood: number | null;
+    anxiety: number | null;
+    energy: number | null;
+  }> {
+    let sql = `
+      SELECT e.date, e.local_time, e.type,
+        COALESCE(e.transcript, e.raw_text) as text,
+        m.mood, m.anxiety, m.energy
+      FROM entries e
+      LEFT JOIN metrics m ON m.entry_id = e.id
+    `;
+    const params: string[] = [];
+    if (start && end) {
+      sql += ' WHERE e.date >= ? AND e.date <= ?';
+      params.push(start, end);
+    }
+    sql += ' ORDER BY e.date ASC, e.created_at ASC';
+    return this.db.prepare(sql).all(...params) as Array<{
+      date: string; local_time: string | null; type: string; text: string | null;
+      mood: number | null; anxiety: number | null; energy: number | null;
+    }>;
   }
 }

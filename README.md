@@ -1,72 +1,76 @@
 # Psychologist Bot
 
-A CBT (Cognitive Behavioral Therapy) voice diary Telegram bot. Post voice or text entries to a Telegram channel, and the bot transcribes, analyzes them using LLM with CBT techniques, and enables follow-up conversations in threads.
+A personal CBT (Cognitive Behavioral Therapy) voice diary bot for Telegram. Record your thoughts, get instant psychological analysis, and have follow-up conversations — all inside a private Telegram channel.
+
+## What it does
+
+You record a voice message in your Telegram channel about your day. The bot transcribes it, runs a CBT-style analysis (detects cognitive distortions, tracks gratitude, notes action items), and posts the results. You can then reply in the thread to discuss your thoughts further — the bot keeps the full conversation context.
+
+Multiple entries per day? The bot sees your earlier entries as reference, so it can track how your thinking evolved throughout the day.
 
 ## Features
 
-- **Voice diary** — post voice messages to a Telegram channel, automatically transcribed via ElevenLabs Scribe (with OpenAI fallback)
-- **CBT analysis** — each entry is analyzed for cognitive distortions, gratitude moments, action items, and sentiment
-- **Thread conversations** — reply in discussion threads to chat with the bot about your entry using CBT techniques
-- **Compare mode** — run multiple LLM providers (Claude + OpenAI) in parallel and compare responses side-by-side
-- **Weekly/monthly reports** — automatic scheduled reports + on-demand via `/weekly` and `/monthly` channel commands
-- **Metrics tracking** — self-reported mood, anxiety, energy (0-10) extracted from entries
-- **Cost tracking** — per-call cost display for both ASR and LLM
-- **Smart context fitting** — reports include transcripts + LLM analyses, with automatic truncation for large contexts
-- **Bilingual** — Russian and English support (configurable)
-
-## Architecture
-
-- **Runtime**: Node.js + TypeScript (ESM)
-- **Telegram**: [grammy](https://grammy.dev/)
-- **Database**: SQLite via better-sqlite3
-- **ASR**: ElevenLabs Scribe v2 (primary) / OpenAI Transcribe (fallback)
-- **LLM**: Claude Sonnet 4.6 / OpenAI GPT-5.4
-- **Scheduler**: node-cron for daily reminders, weekly and monthly reports
-
-## Setup
-
-1. Clone the repo
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Copy `.env.example` to `.env` and fill in your API keys:
-   ```bash
-   cp .env.example .env
-   ```
-4. Create a Telegram bot via [@BotFather](https://t.me/BotFather)
-5. Create a Telegram channel with a linked discussion group
-6. Add the bot as admin to both channel and discussion group
-7. Run the bot:
-   ```bash
-   npm run dev    # development (tsx watch)
-   npm run build  # compile TypeScript
-   npm start      # production
-   ```
-
-## Configuration
-
-All configuration is done via environment variables. See [.env.example](.env.example) for all options.
-
-Key settings:
-- `ASR_PROVIDER` — `elevenlabs` or `openai`
-- `LLM_PROVIDER` — `claude` or `openai`
-- `COMPARE_MODE` — `true` to run all LLM providers in parallel
-- `BOT_LANGUAGE` — `ru` or `en`
+- **Voice diary** — post voice messages, auto-transcribed via ElevenLabs Scribe (OpenAI fallback if balance runs out)
+- **CBT analysis** — cognitive distortions, sentiment, gratitude, action items
+- **Thread conversations** — reply to discuss your entry using CBT techniques (Socratic dialogue, reframing)
+- **Same-day context** — later entries include earlier ones as reference, so the model sees the full picture
+- **Compare mode** — run Claude + OpenAI in parallel, see both analyses side by side
+- **Reports** — weekly and monthly summaries with smart context fitting
+- **Metrics** — mood, anxiety, energy (0-10), extracted from your speech
+- **Streak tracking** — consecutive days with entries
+- **CSV export** — download your diary data
+- **Cost tracking** — see per-call ASR and LLM costs
+- **Bilingual** — Russian and English
 
 ## Channel Commands
 
-- `/weekly` — generate a test weekly report (Monday → today)
-- `/monthly` — generate a test monthly report (1st → today)
+Type these in the **channel** (not the discussion group):
 
-## How It Works
+| Command | What it does |
+|---------|-------------|
+| `/weekly` | Generate weekly report (Monday → today) |
+| `/monthly` | Generate monthly report (1st → today) |
+| `/stats` | Show streak, entry count, average metrics |
+| `/export` | Download all entries as CSV |
 
-1. You post a voice/text message to the Telegram channel
-2. The bot transcribes voice messages using ElevenLabs ASR
-3. LLM analyzes the entry for cognitive distortions, sentiment, gratitude
-4. Transcript and analysis appear in the discussion group thread
-5. You can reply in the thread to continue a CBT conversation
-6. Weekly/monthly reports aggregate your entries with smart context fitting
+## Setup
+
+```bash
+# 1. Clone and install
+git clone https://github.com/Evgeny-/psychologist-bot.git
+cd psychologist-bot
+npm install
+
+# 2. Configure
+cp .env.example .env
+# Edit .env with your API keys and Telegram IDs
+
+# 3. Run
+npm run dev    # development (auto-reload)
+npm run build  # compile
+npm start      # production
+```
+
+You'll need:
+- A Telegram bot ([@BotFather](https://t.me/BotFather))
+- A private Telegram channel with a linked discussion group
+- Bot added as admin to both
+- API keys for at least one LLM (Anthropic or OpenAI) and one ASR (ElevenLabs or OpenAI)
+
+## Configuration
+
+All settings via environment variables — see [.env.example](.env.example).
+
+Key ones:
+- `LLM_PROVIDER` — `claude` or `openai`
+- `ASR_PROVIDER` — `elevenlabs` or `openai`
+- `COMPARE_MODE=true` — run all LLM providers in parallel
+- `BOT_LANGUAGE` — `ru` or `en`
+- `BOT_TIMEZONE` — for correct date calculations (e.g. `Europe/Amsterdam`)
+
+## Tech Stack
+
+TypeScript, Node.js (ESM), [grammy](https://grammy.dev/), SQLite (better-sqlite3), node-cron, ElevenLabs Scribe v2, Claude Sonnet 4.6, OpenAI GPT-5.4
 
 ## License
 

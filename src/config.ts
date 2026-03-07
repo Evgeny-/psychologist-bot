@@ -35,6 +35,8 @@ export const config = {
 
   language: (process.env.BOT_LANGUAGE || 'ru') as BotLanguage,
 
+  timezone: process.env.BOT_TIMEZONE || 'Europe/Moscow',
+
   keys: {
     openai: process.env.OPENAI_API_KEY || '',
     anthropic: process.env.ANTHROPIC_API_KEY || '',

@@ -1,6 +1,7 @@
 import type { Api } from 'grammy';
 import { createLLMProvider, createAllLLMProviders, type LLMProvider, type LLMUsage } from '../providers/llm/index.js';
 import { getDailySystemPrompt } from '../prompts/daily.js';
+import { todayLocal } from '../utils/date.js';
 import { config } from '../config.js';
 import { t } from '../i18n/index.js';
 import { sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
@@ -52,6 +53,26 @@ function formatUsage(usage?: LLMUsage): string {
   return ` | ${usage.inputTokens}in/${usage.outputTokens}out | $${usage.costUsd.toFixed(5)}`;
 }
 
+function buildUserPromptWithContext(text: string, date: string, entryId: number): string {
+  const earlier = queries.getEarlierEntriesForDate(date, entryId);
+  if (earlier.length === 0) return text;
+
+  const contextParts = earlier.map((e, i) => {
+    const entryText = e.transcript || e.raw_text || '';
+    let part = `[Earlier entry ${i + 1}]\n${entryText}`;
+    if (e.analysis_text) {
+      part += `\n\n[Your previous analysis]\n${e.analysis_text}`;
+    }
+    return part;
+  });
+
+  const contextBlock = config.language === 'ru'
+    ? `--- КОНТЕКСТ: предыдущие записи за сегодня (только для справки, НЕ анализируй их повторно) ---\n\n${contextParts.join('\n\n---\n\n')}\n\n--- ТЕКУЩАЯ ЗАПИСЬ (анализируй именно её) ---\n\n`
+    : `--- CONTEXT: earlier entries from today (for reference only, do NOT re-analyze them) ---\n\n${contextParts.join('\n\n---\n\n')}\n\n--- CURRENT ENTRY (analyze this one) ---\n\n`;
+
+  return contextBlock + text;
+}
+
 export async function analyzeEntry(
   api: Api,
   chatId: number,
@@ -59,8 +80,11 @@ export async function analyzeEntry(
   text: string,
   threadId: number,
   replyToMessageId?: number,
+  date?: string,
 ): Promise<void> {
   const systemPrompt = getDailySystemPrompt(config.language);
+  const entryDate = date || todayLocal();
+  const userPrompt = buildUserPromptWithContext(text, entryDate, entryId);
 
   // Save user's diary entry as first thread message
   queries.insertThreadMessage({
@@ -70,12 +94,12 @@ export async function analyzeEntry(
   });
 
   if (config.compareMode) {
-    await analyzeCompare(api, chatId, entryId, text, systemPrompt, threadId, replyToMessageId);
+    await analyzeCompare(api, chatId, entryId, userPrompt, systemPrompt, threadId, replyToMessageId);
     return;
   }
 
   const llm = createLLMProvider();
-  const result = await llm.analyze(text, systemPrompt);
+  const result = await llm.analyze(userPrompt, systemPrompt);
 
   saveAnalysis(entryId, result.text, llm);
 
@@ -115,6 +139,8 @@ async function analyzeCompare(
     }),
   );
 
+  let threadSaved = false;
+
   for (let i = 0; i < results.length; i++) {
     const settled = results[i];
     const provider = providers[i];
@@ -126,8 +152,8 @@ async function analyzeCompare(
 
       const freeform = extractFreeformAnalysis(result.text);
 
-      // Save first provider's response as thread context for follow-up chat
-      if (i === 0) {
+      // Save first successful provider's response as thread context for follow-up chat
+      if (!threadSaved) {
         queries.insertThreadMessage({
           thread_id: threadId,
           role: 'assistant',
@@ -135,6 +161,7 @@ async function analyzeCompare(
           llm_provider: llm.providerName,
           llm_model: llm.modelName,
         });
+        threadSaved = true;
       }
       const meta = `<blockquote>${label} | ${elapsed}s${formatUsage(result.usage)}</blockquote>`;
       const body = markdownToHtml(freeform);

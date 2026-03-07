@@ -70,6 +70,8 @@ async function chatCompare(
     }),
   );
 
+  let threadSaved = false;
+
   for (let i = 0; i < results.length; i++) {
     const settled = results[i];
     const provider = providers[i];
@@ -79,7 +81,8 @@ async function chatCompare(
       const { result, llm, elapsed } = settled.value;
       const text = result.text.trim();
 
-      if (i === 0) {
+      // Save first successful provider's response to thread for context continuity
+      if (!threadSaved) {
         queries.insertThreadMessage({
           thread_id: threadId,
           role: 'assistant',
@@ -87,6 +90,7 @@ async function chatCompare(
           llm_provider: llm.providerName,
           llm_model: llm.modelName,
         });
+        threadSaved = true;
       }
 
       const usage = result.usage

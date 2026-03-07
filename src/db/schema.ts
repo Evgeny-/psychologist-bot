@@ -28,6 +28,12 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
     }
   }
 
+  // Migration: add local_time column to entries
+  const hasLocalTime = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('entries') WHERE name='local_time'").get() as { cnt: number };
+  if (hasLocalTime.cnt === 0) {
+    try { db.exec("ALTER TABLE entries ADD COLUMN local_time TEXT"); } catch { /* table may not exist yet */ }
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS entries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,6 +44,7 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
       raw_text TEXT,
       transcript TEXT,
       duration_seconds INTEGER,
+      local_time TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
 

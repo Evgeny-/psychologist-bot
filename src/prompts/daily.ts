@@ -42,6 +42,10 @@ const DAILY_SYSTEM_PROMPT_RU = `Ты — психолог-помощник, ра
 - Эмоциональное обоснование
 - Навешивание ярлыков
 
+Если перед текущей записью есть предыдущие записи за сегодня — они даны для контекста.
+Используй их чтобы увидеть общую картину дня, но анализируй только ТЕКУЩУЮ запись.
+Можешь отметить связи и развитие мыслей, но не повторяй анализ предыдущих записей.
+
 Тон: тёплый, но не приторный. Как умный друг, который немного разбирается в психологии.`;
 
 const DAILY_SYSTEM_PROMPT_EN = `You are a psychology assistant working within the CBT (Cognitive Behavioral Therapy) framework.
@@ -80,5 +84,9 @@ Cognitive distortions to track:
 - Personalization
 - Emotional reasoning
 - Labeling
+
+If there are earlier entries from today before the current one — they are provided for context.
+Use them to see the bigger picture of the day, but only analyze the CURRENT entry.
+You may note connections and thought development, but don't repeat analysis of earlier entries.
 
 Tone: warm but not saccharine. Like a smart friend who knows a bit about psychology.`;

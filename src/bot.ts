@@ -1,4 +1,4 @@
-import { Bot, type Context } from 'grammy';
+import { Bot, InputFile, type Context } from 'grammy';
 import { config } from './config.js';
 import { t } from './i18n/index.js';
 import { queries } from './db/index.js';
@@ -7,12 +7,10 @@ import { analyzeEntry } from './services/analysis.js';
 import { handleThreadReply } from './services/chat.js';
 import { parseMetrics, hasAnyMetrics } from './services/metrics.js';
 import { generateTestWeeklyReport, generateTestMonthlyReport } from './services/reports.js';
+import { todayLocal, nowLocalTime, formatDateLocal } from './utils/date.js';
+import { sendSplitMessages } from './utils/telegram.js';
 import { ApiBalanceError } from './providers/asr/elevenlabs.js';
 import { ApiBalanceError as LLMBalanceError } from './providers/llm/claude.js';
-
-function todayStr(): string {
-  return new Date().toISOString().split('T')[0];
-}
 
 
 export function createBot(): Bot {
@@ -39,6 +37,26 @@ export function createBot(): Bot {
         await generateTestMonthlyReport(ctx.api, chatId);
       } catch (err) {
         console.error('Monthly report error:', err);
+      }
+      return;
+    }
+
+    if (text === '/stats' || text.startsWith('/stats@')) {
+      try {
+        console.log('Channel command: /stats');
+        await handleStatsCommand(ctx.api, chatId);
+      } catch (err) {
+        console.error('Stats error:', err);
+      }
+      return;
+    }
+
+    if (text === '/export' || text.startsWith('/export@')) {
+      try {
+        console.log('Channel command: /export');
+        await handleExportCommand(ctx.api, chatId);
+      } catch (err) {
+        console.error('Export error:', err);
       }
       return;
     }
@@ -147,7 +165,7 @@ async function handleNewEntry(ctx: Context): Promise<void> {
     return;
   }
 
-  const today = todayStr();
+  const today = todayLocal();
   const forwardOrigin = msg.forward_origin;
   const channelPostId = forwardOrigin && 'message_id' in forwardOrigin ? forwardOrigin.message_id : undefined;
 
@@ -158,6 +176,7 @@ async function handleNewEntry(ctx: Context): Promise<void> {
     type: entryType,
     raw_text: text,
     duration_seconds: duration,
+    local_time: nowLocalTime(),
   });
 
   const replyToId = msg.message_thread_id ?? msg.message_id;
@@ -197,11 +216,83 @@ async function handleNewEntry(ctx: Context): Promise<void> {
     });
   }
 
-  await analyzeEntry(ctx.api, ctx.chat!.id, entryId, contentForAnalysis, replyToId, replyToId);
+  await analyzeEntry(ctx.api, ctx.chat!.id, entryId, contentForAnalysis, replyToId, replyToId, today);
 
   if (!hasAnyMetrics(metrics) && !queries.hasMetricsForDate(today)) {
     await ctx.reply(t().metricsAsk, { reply_to_message_id: replyToId });
   }
+}
+
+async function handleStatsCommand(api: import('grammy').Api, chatId: number): Promise<void> {
+  const strings = t();
+  const today = todayLocal();
+  const streak = queries.getStreak(today);
+  const total = queries.getTotalEntries();
+
+  // Last 7 days metrics
+  const weekAgo = new Date();
+  weekAgo.setDate(weekAgo.getDate() - 6);
+  const startStr = formatDateLocal(weekAgo);
+  const avg = queries.getAverageMetrics(startStr, today);
+
+  const lines: string[] = [
+    `<b>${strings.statsHeader}</b>`,
+    '',
+    strings.statsStreak.replace('{streak}', String(streak)),
+    strings.statsTotalEntries.replace('{total}', String(total)),
+  ];
+
+  if (avg.count > 0) {
+    lines.push('');
+    lines.push(strings.statsMetricsForDays.replace('{days}', '7'));
+    if (avg.avgMood !== null) lines.push(strings.statsAvgMood.replace('{value}', avg.avgMood.toFixed(1)));
+    if (avg.avgAnxiety !== null) lines.push(strings.statsAvgAnxiety.replace('{value}', avg.avgAnxiety.toFixed(1)));
+    if (avg.avgEnergy !== null) lines.push(strings.statsAvgEnergy.replace('{value}', avg.avgEnergy.toFixed(1)));
+  } else {
+    lines.push('');
+    lines.push(strings.statsNoMetrics);
+  }
+
+  // Last 7 days per-day metrics chart
+  const metrics = queries.getMetricsByDateRange(startStr, today);
+  if (metrics.length > 0) {
+    lines.push('');
+    for (const m of metrics) {
+      const parts: string[] = [];
+      if (m.mood !== null) parts.push(`M${m.mood}`);
+      if (m.anxiety !== null) parts.push(`A${m.anxiety}`);
+      if (m.energy !== null) parts.push(`E${m.energy}`);
+      if (parts.length) lines.push(`${m.date}: ${parts.join(' ')}`);
+    }
+  }
+
+  lines.push('');
+  lines.push('#bot');
+
+  await api.sendMessage(chatId, lines.join('\n'), { parse_mode: 'HTML' });
+}
+
+async function handleExportCommand(api: import('grammy').Api, chatId: number): Promise<void> {
+  const strings = t();
+  const data = queries.getExportData();
+
+  if (data.length === 0) {
+    await sendSplitMessages(api, chatId, `${strings.exportEmpty}\n\n#bot`);
+    return;
+  }
+
+  const header = 'date,local_time,type,mood,anxiety,energy,text';
+  const rows = data.map((r) => {
+    const text = (r.text || '').replace(/"/g, '""').replace(/\n/g, ' ');
+    return `${r.date},${r.local_time || ''},${r.type},${r.mood ?? ''},${r.anxiety ?? ''},${r.energy ?? ''},"${text}"`;
+  });
+
+  const csv = [header, ...rows].join('\n');
+  const buffer = Buffer.from(csv, 'utf-8');
+
+  await api.sendDocument(chatId, new InputFile(buffer, 'cbt-export.csv'), {
+    caption: `Export: ${data.length} entries\n\n#bot`,
+  });
 }
 
 async function handleError(ctx: Context, err: unknown): Promise<void> {

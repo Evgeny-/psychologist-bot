@@ -89,6 +89,7 @@ async function main() {
             ? `Compare: ON (claude/${config.llm.claudeModel} + openai/${config.llm.openaiModel})`
             : 'Compare: OFF',
           `Language: ${config.language}`,
+          `Timezone: ${config.timezone}`,
           '',
           elevenLabs,
           openai,

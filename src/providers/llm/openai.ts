@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import type { LLMProvider, LLMResult, ChatMessage } from './index.js';
 import { ApiBalanceError } from './claude.js';
+import { withRetry } from '../../utils/retry.js';
 
 // Pricing per million tokens
 const OPENAI_PRICING: Record<string, { input: number; output: number }> = {
@@ -40,14 +41,14 @@ export class OpenAILLM implements LLMProvider {
 
   async chat(messages: ChatMessage[], systemPrompt: string): Promise<LLMResult> {
     try {
-      const response = await this.client.chat.completions.create({
+      const response = await withRetry(() => this.client.chat.completions.create({
         model: this.model,
         messages: [
           { role: 'system', content: systemPrompt },
           ...messages,
         ],
         max_completion_tokens: 4096,
-      });
+      }));
 
       const text = response.choices[0]?.message?.content ?? '';
       const inputTokens = response.usage?.prompt_tokens ?? 0;

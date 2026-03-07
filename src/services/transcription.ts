@@ -1,7 +1,7 @@
 import type { Api } from 'grammy';
 import { createASRProvider, calcASRCost, type ASRProvider } from '../providers/asr/index.js';
 import { OpenAIASR } from '../providers/asr/openai.js';
-import { downloadFileBuffer, sendSplitMessages } from '../utils/telegram.js';
+import { downloadFileBuffer, sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
 import { config } from '../config.js';
 import { t } from '../i18n/index.js';
 
@@ -46,13 +46,13 @@ export async function transcribeVoiceMessage(
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   const cost = calcASRCost(durationSeconds, asr.costPerMinute);
-  const header = t().transcriptHeader;
-
-  let fullText = `${header}\n\n${transcript}\n\n💰 $${cost.toFixed(5)} | ${elapsed}s`;
+  let metaInfo = `${t().transcriptHeader} | $${cost.toFixed(5)} | ${elapsed}s`;
   if (fallbackUsed) {
-    fullText += `\n\n⚠️ ${config.asr.provider} failed, used OpenAI fallback`;
+    metaInfo += `\n⚠️ ${config.asr.provider} failed, used OpenAI fallback`;
   }
+  const meta = `<blockquote>${metaInfo}</blockquote>`;
+  const body = markdownToHtml(transcript.trim());
 
-  const messageIds = await sendSplitMessages(api, chatId, fullText, replyToMessageId);
+  const messageIds = await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}`, replyToMessageId);
   return { transcript, messageIds };
 }

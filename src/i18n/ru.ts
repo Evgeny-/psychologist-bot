@@ -1,6 +1,6 @@
 export const ru = {
-  transcriptHeader: '--- Транскрипт ---',
-  analysisHeader: '--- Анализ ---',
+  transcriptHeader: 'Транскрипт',
+  analysisHeader: 'Анализ',
   processingVoice: 'Обрабатываю голосовое сообщение...',
   processingText: 'Анализирую...',
   errorGeneric: 'Произошла ошибка при обработке сообщения. Попробую позже.',
@@ -8,8 +8,8 @@ export const ru = {
   errorApiGeneric: '⚠️ Ошибка API ({provider}): {message}',
   reminderDay1: 'Привет! Сегодня ещё нет записи. Как прошёл день?',
   reminderDay2plus: 'Уже {days} дней без записей. Даже короткое сообщение — лучше, чем ничего.',
-  weeklyReportTitle: '--- Недельный отчёт ({start} — {end}) ---',
-  monthlyReportTitle: '--- Месячный отчёт ({start} — {end}) ---',
+  weeklyReportTitle: 'Недельный отчёт ({start} — {end})',
+  monthlyReportTitle: 'Месячный отчёт ({start} — {end})',
   metricsAsk: 'Не забудь указать метрики: настроение, тревога, энергия (0-10)',
   metricsPatterns: {
     mood: ['настроение', 'н'],

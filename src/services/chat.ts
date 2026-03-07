@@ -2,7 +2,7 @@ import type { Api } from 'grammy';
 import { createLLMProvider, createAllLLMProviders, type ChatMessage } from '../providers/llm/index.js';
 import { getChatSystemPrompt } from '../prompts/chat.js';
 import { config } from '../config.js';
-import { sendSplitMessages } from '../utils/telegram.js';
+import { sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
 import { queries } from '../db/index.js';
 
 export async function handleThreadReply(
@@ -14,17 +14,14 @@ export async function handleThreadReply(
 ): Promise<void> {
   const systemPrompt = getChatSystemPrompt(config.language);
 
-  // Load conversation history from DB
   const history = queries.getThreadMessages(threadId);
   const messages: ChatMessage[] = history.map((m) => ({
     role: m.role,
     content: m.content,
   }));
 
-  // Add current user message
   messages.push({ role: 'user', content: userMessage });
 
-  // Save user message to thread
   queries.insertThreadMessage({
     thread_id: threadId,
     role: 'user',
@@ -38,18 +35,20 @@ export async function handleThreadReply(
 
   const llm = createLLMProvider();
   const result = await llm.chat(messages, systemPrompt);
+  const text = result.text.trim();
 
-  // Save assistant response to thread
   queries.insertThreadMessage({
     thread_id: threadId,
     role: 'assistant',
-    content: result.text,
+    content: text,
     llm_provider: llm.providerName,
     llm_model: llm.modelName,
   });
 
-  const costLine = result.usage ? `\n\n💰 $${result.usage.costUsd.toFixed(5)} (${result.usage.inputTokens}in/${result.usage.outputTokens}out)` : '';
-  await sendSplitMessages(api, chatId, `${result.text}${costLine}`, replyToMessageId);
+  const costInfo = result.usage ? ` | $${result.usage.costUsd.toFixed(5)}` : '';
+  const meta = `<blockquote>${llm.providerName} (${llm.modelName})${costInfo}</blockquote>`;
+  const body = markdownToHtml(text);
+  await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}`, replyToMessageId);
 }
 
 async function chatCompare(
@@ -78,13 +77,13 @@ async function chatCompare(
 
     if (settled.status === 'fulfilled') {
       const { result, llm, elapsed } = settled.value;
+      const text = result.text.trim();
 
-      // Save first successful response to thread for context continuity
       if (i === 0) {
         queries.insertThreadMessage({
           thread_id: threadId,
           role: 'assistant',
-          content: result.text,
+          content: text,
           llm_provider: llm.providerName,
           llm_model: llm.modelName,
         });
@@ -93,11 +92,12 @@ async function chatCompare(
       const usage = result.usage
         ? ` | ${result.usage.inputTokens}in/${result.usage.outputTokens}out | $${result.usage.costUsd.toFixed(5)}`
         : '';
-      const header = `--- ${label} | ${elapsed}s${usage} ---`;
-      await sendSplitMessages(api, chatId, `${header}\n\n${result.text}`, replyToMessageId);
+      const meta = `<blockquote>${label} | ${elapsed}s${usage}</blockquote>`;
+      const body = markdownToHtml(text);
+      await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}`, replyToMessageId);
     } else {
       const errMsg = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
-      await sendSplitMessages(api, chatId, `--- ${label} ---\n\nError: ${errMsg}`, replyToMessageId);
+      await sendRawHtmlMessages(api, chatId, `<blockquote>${label}</blockquote>\n\nError: ${errMsg}`, replyToMessageId);
     }
   }
 }

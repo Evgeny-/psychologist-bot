@@ -123,7 +123,7 @@ async function runWithProvider(
     meta = `<blockquote>${title}${costInfo}</blockquote>`;
   }
   // meta is already HTML — send raw text (not through markdownToHtml) for the meta part
-  const body = markdownToHtml(result.text);
+  const body = markdownToHtml(result.text.trim());
   await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}\n\n#bot`, replyToMessageId);
 }
 
@@ -158,7 +158,7 @@ async function runWeeklyReport(
     } catch (err) {
       const label = `${provider.providerName} (${provider.modelName})`;
       const errMsg = err instanceof Error ? err.message : String(err);
-      await sendSplitMessages(api, chatId, `${title}\n--- ${label} ---\n\nError: ${errMsg}\n\n#bot`, replyToMessageId);
+      await sendRawHtmlMessages(api, chatId, `<blockquote>${title}\n${label}</blockquote>\n\nError: ${errMsg}\n\n#bot`, replyToMessageId);
     }
   }
 }
@@ -232,7 +232,7 @@ async function runMonthlyReport(
     } catch (err) {
       const label = `${provider.providerName} (${provider.modelName})`;
       const errMsg = err instanceof Error ? err.message : String(err);
-      await sendSplitMessages(api, chatId, `${title}\n--- ${label} ---\n\nError: ${errMsg}\n\n#bot`);
+      await sendRawHtmlMessages(api, chatId, `<blockquote>${title}\n${label}</blockquote>\n\nError: ${errMsg}\n\n#bot`);
     }
   }
 }

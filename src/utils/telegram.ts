@@ -7,14 +7,35 @@ function escapeHtml(text: string): string {
 }
 
 export function markdownToHtml(text: string): string {
-  let html = escapeHtml(text);
-  // **bold** → <b>bold</b>
-  html = html.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-  // *italic* → <i>italic</i> (but not inside tags)
-  html = html.replace(/(?<![<\/])\*(.+?)\*(?!>)/g, '<i>$1</i>');
-  // `code` → <code>code</code>
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-  return html;
+  // Process line by line for headers, then inline formatting
+  const lines = text.split('\n');
+  const result: string[] = [];
+
+  for (const line of lines) {
+    // --- horizontal rule → empty line (Telegram doesn't support <hr>)
+    if (/^-{3,}\s*$/.test(line)) {
+      result.push('');
+      continue;
+    }
+
+    let escaped = escapeHtml(line);
+
+    // ### Header 3 → bold
+    // ## Header 2 → bold
+    // # Header 1 → bold
+    escaped = escaped.replace(/^#{1,3}\s+(.+)$/, '<b>$1</b>');
+
+    // **bold** → <b>bold</b>
+    escaped = escaped.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    // *italic* → <i>italic</i> (but not inside tags)
+    escaped = escaped.replace(/(?<![<\/])\*(.+?)\*(?!>)/g, '<i>$1</i>');
+    // `code` → <code>code</code>
+    escaped = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    result.push(escaped);
+  }
+
+  return result.join('\n');
 }
 
 export function splitMessage(text: string, maxLen = MAX_MESSAGE_LENGTH): string[] {

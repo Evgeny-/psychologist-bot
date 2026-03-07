@@ -88,6 +88,26 @@ export async function sendSplitMessages(
   return messageIds;
 }
 
+export async function sendRawHtmlMessages(
+  api: Api,
+  chatId: number,
+  html: string,
+  replyToMessageId?: number,
+): Promise<number[]> {
+  const chunks = splitMessage(html);
+  const messageIds: number[] = [];
+
+  for (let i = 0; i < chunks.length; i++) {
+    const msg = await api.sendMessage(chatId, chunks[i], {
+      parse_mode: 'HTML',
+      reply_to_message_id: i === 0 ? replyToMessageId : undefined,
+    });
+    messageIds.push(msg.message_id);
+  }
+
+  return messageIds;
+}
+
 export async function downloadFileBuffer(api: Api, fileId: string): Promise<Buffer> {
   const file = await api.getFile(fileId);
   if (!file.file_path) throw new Error('No file_path in getFile response');

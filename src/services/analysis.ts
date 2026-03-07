@@ -3,7 +3,7 @@ import { createLLMProvider, createAllLLMProviders, type LLMProvider, type LLMUsa
 import { getDailySystemPrompt } from '../prompts/daily.js';
 import { config } from '../config.js';
 import { t } from '../i18n/index.js';
-import { sendSplitMessages } from '../utils/telegram.js';
+import { sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
 import { queries } from '../db/index.js';
 
 interface AnalysisResult {
@@ -89,9 +89,10 @@ export async function analyzeEntry(
     llm_model: llm.modelName,
   });
 
-  const header = t().analysisHeader;
-  const costLine = result.usage ? `\n\n💰 $${result.usage.costUsd.toFixed(5)} (${result.usage.inputTokens}in/${result.usage.outputTokens}out)` : '';
-  await sendSplitMessages(api, chatId, `${header}\n\n${freeform}${costLine}`, replyToMessageId);
+  const costInfo = result.usage ? ` | $${result.usage.costUsd.toFixed(5)}` : '';
+  const meta = `<blockquote>${t().analysisHeader}${costInfo}</blockquote>`;
+  const body = markdownToHtml(freeform);
+  await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}`, replyToMessageId);
 }
 
 async function analyzeCompare(
@@ -135,11 +136,12 @@ async function analyzeCompare(
           llm_model: llm.modelName,
         });
       }
-      const header = `--- LLM: ${label} | ${elapsed}s${formatUsage(result.usage)} ---`;
-      await sendSplitMessages(api, chatId, `${header}\n\n${freeform}`, replyToMessageId);
+      const meta = `<blockquote>${label} | ${elapsed}s${formatUsage(result.usage)}</blockquote>`;
+      const body = markdownToHtml(freeform);
+      await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}`, replyToMessageId);
     } else {
       const errMsg = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
-      await sendSplitMessages(api, chatId, `--- LLM: ${label} ---\n\nError: ${errMsg}`, replyToMessageId);
+      await sendRawHtmlMessages(api, chatId, `<blockquote>${label}</blockquote>\n\nError: ${errMsg}`, replyToMessageId);
     }
   }
 }

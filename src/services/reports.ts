@@ -5,7 +5,7 @@ import { getMonthlySystemPrompt } from '../prompts/monthly.js';
 import { config } from '../config.js';
 import { t } from '../i18n/index.js';
 import { queries } from '../db/index.js';
-import { sendSplitMessages } from '../utils/telegram.js';
+import { sendSplitMessages, sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
 
 const llm = createLLMProvider();
 
@@ -115,11 +115,16 @@ async function runWithProvider(
   const usage = result.usage
     ? ` | ${result.usage.inputTokens}in/${result.usage.outputTokens}out | $${result.usage.costUsd.toFixed(5)}`
     : '';
-  const header = config.compareMode
-    ? `${title}\n--- ${provider.providerName} (${provider.modelName}) | ${elapsed}s${usage} ---`
-    : title;
-  const costLine = !config.compareMode && result.usage ? `\n\n💰 $${result.usage.costUsd.toFixed(5)}` : '';
-  await sendSplitMessages(api, chatId, `${header}\n\n${result.text}${costLine}\n\n#bot`, replyToMessageId);
+  let meta: string;
+  if (config.compareMode) {
+    meta = `<blockquote>${title}\n${provider.providerName} (${provider.modelName}) | ${elapsed}s${usage}</blockquote>`;
+  } else {
+    const costInfo = result.usage ? ` | $${result.usage.costUsd.toFixed(5)}` : '';
+    meta = `<blockquote>${title}${costInfo}</blockquote>`;
+  }
+  // meta is already HTML — send raw text (not through markdownToHtml) for the meta part
+  const body = markdownToHtml(result.text);
+  await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}\n\n#bot`, replyToMessageId);
 }
 
 async function runWeeklyReport(

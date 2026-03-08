@@ -68,13 +68,25 @@ export function splitMessage(text: string, maxLen = MAX_MESSAGE_LENGTH): string[
   return chunks;
 }
 
+// Extract a trailing hashtag (e.g. #bot) and ensure it appears in every chunk
+function splitWithTag(text: string, maxLen: number): string[] {
+  const tagMatch = text.match(/\n\n(#\w+)\s*$/);
+  if (!tagMatch) return splitMessage(text, maxLen);
+
+  const tag = tagMatch[1];
+  const body = text.slice(0, tagMatch.index!);
+  // Reserve space for the tag suffix in each chunk
+  const chunks = splitMessage(body, maxLen - tag.length - 2);
+  return chunks.map((chunk) => `${chunk}\n\n${tag}`);
+}
+
 export async function sendSplitMessages(
   api: Api,
   chatId: number,
   text: string,
   replyToMessageId?: number,
 ): Promise<number[]> {
-  const chunks = splitMessage(text);
+  const chunks = splitWithTag(text, MAX_MESSAGE_LENGTH);
   const messageIds: number[] = [];
 
   for (let i = 0; i < chunks.length; i++) {
@@ -94,7 +106,7 @@ export async function sendRawHtmlMessages(
   html: string,
   replyToMessageId?: number,
 ): Promise<number[]> {
-  const chunks = splitMessage(html);
+  const chunks = splitWithTag(html, MAX_MESSAGE_LENGTH);
   const messageIds: number[] = [];
 
   for (let i = 0; i < chunks.length; i++) {

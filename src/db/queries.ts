@@ -258,6 +258,27 @@ export class Queries {
     return map;
   }
 
+  getAllThreadMessages(threadIds: number[]): Map<number, ThreadMessageRow[]> {
+    if (threadIds.length === 0) return new Map();
+    const placeholders = threadIds.map(() => '?').join(',');
+    const rows = this.db.prepare(`
+      SELECT * FROM thread_messages
+      WHERE thread_id IN (${placeholders})
+      ORDER BY created_at ASC
+    `).all(...threadIds) as ThreadMessageRow[];
+
+    const map = new Map<number, ThreadMessageRow[]>();
+    for (const row of rows) {
+      const existing = map.get(row.thread_id);
+      if (existing) {
+        existing.push(row);
+      } else {
+        map.set(row.thread_id, [row]);
+      }
+    }
+    return map;
+  }
+
   getEarlierEntriesForDate(date: string, excludeEntryId: number): Array<{ transcript: string | null; raw_text: string | null; analysis_text: string | null }> {
     return this.db.prepare(`
       SELECT e.transcript, e.raw_text,

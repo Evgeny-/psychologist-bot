@@ -20,10 +20,16 @@ function getMonday(d: Date): Date {
   return date;
 }
 
+interface ThreadMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 interface DaySummary {
   date: string;
   transcript: string | null;
   llmResponse: string | null;
+  threadFollowUp: ThreadMessage[] | null;
   metrics: string | null;
 }
 
@@ -32,13 +38,26 @@ function buildDaySummaries(start: string, end: string): DaySummary[] {
   const metrics = queries.getMetricsByDateRange(start, end);
 
   const threadIds = entries.map((e) => e.telegram_message_id);
-  const llmResponses = queries.getFirstAssistantMessages(threadIds);
+  const allThreadMessages = queries.getAllThreadMessages(threadIds);
 
   const summaries: DaySummary[] = [];
 
   for (const entry of entries) {
     const transcript = entry.transcript || entry.raw_text || null;
-    const llmResponse = llmResponses.get(entry.telegram_message_id) ?? null;
+    const messages = allThreadMessages.get(entry.telegram_message_id) ?? [];
+
+    // First assistant message is the initial LLM analysis
+    const firstAssistantIdx = messages.findIndex((m) => m.role === 'assistant');
+    const llmResponse = firstAssistantIdx >= 0 ? messages[firstAssistantIdx].content : null;
+
+    // Everything after the first assistant message is follow-up conversation
+    let threadFollowUp: ThreadMessage[] | null = null;
+    if (firstAssistantIdx >= 0 && firstAssistantIdx < messages.length - 1) {
+      threadFollowUp = messages.slice(firstAssistantIdx + 1).map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+    }
 
     const dayMetrics = metrics.find((m) => m.date === entry.date);
     let metricsStr: string | null = null;
@@ -51,10 +70,17 @@ function buildDaySummaries(start: string, end: string): DaySummary[] {
       if (m.length) metricsStr = m.join(', ');
     }
 
-    summaries.push({ date: entry.date, transcript, llmResponse, metrics: metricsStr });
+    summaries.push({ date: entry.date, transcript, llmResponse, threadFollowUp, metrics: metricsStr });
   }
 
   return summaries;
+}
+
+function formatThreadFollowUp(messages: ThreadMessage[]): string {
+  return messages.map((m) => {
+    const label = m.role === 'user' ? 'User' : 'Assistant';
+    return `${label}:\n${m.content}`;
+  }).join('\n\n');
 }
 
 function formatSummariesFull(summaries: DaySummary[]): string {
@@ -62,6 +88,7 @@ function formatSummariesFull(summaries: DaySummary[]): string {
     const parts = [`[${s.date}]`];
     if (s.transcript) parts.push(`Transcript:\n${s.transcript}`);
     if (s.llmResponse) parts.push(`LLM Analysis:\n${s.llmResponse}`);
+    if (s.threadFollowUp) parts.push(`Follow-up Conversation:\n${formatThreadFollowUp(s.threadFollowUp)}`);
     if (s.metrics) parts.push(`Metrics: ${s.metrics}`);
     return parts.join('\n\n');
   }).join('\n\n---\n\n');
@@ -72,6 +99,7 @@ function formatSummariesCompact(summaries: DaySummary[]): string {
     const parts = [`[${s.date}]`];
     if (s.llmResponse) parts.push(`LLM Analysis:\n${s.llmResponse}`);
     else if (s.transcript) parts.push(`(transcript available, omitted for brevity)`);
+    if (s.threadFollowUp) parts.push(`Follow-up Conversation:\n${formatThreadFollowUp(s.threadFollowUp)}`);
     if (s.metrics) parts.push(`Metrics: ${s.metrics}`);
     return parts.join('\n\n');
   }).join('\n\n---\n\n');

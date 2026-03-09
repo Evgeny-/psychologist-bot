@@ -109,6 +109,15 @@ function buildUserPromptWithContext(text: string, date: string, entryId: number)
   return contextBlock + text;
 }
 
+function buildSystemPromptWithMemory(basePrompt: string): string {
+  const memory = queries.getMemory();
+  if (!memory) return basePrompt;
+  const label = config.language === 'ru'
+    ? '--- ПАМЯТЬ О ПОЛЬЗОВАТЕЛЕ (используй как контекст, не упоминай явно) ---'
+    : '--- USER MEMORY (use as context, do not mention explicitly) ---';
+  return `${basePrompt}\n\n${label}\n${memory}\n---`;
+}
+
 export async function analyzeEntry(
   api: Api,
   chatId: number,
@@ -118,7 +127,7 @@ export async function analyzeEntry(
   replyToMessageId?: number,
   date?: string,
 ): Promise<ExtractedMetrics> {
-  const systemPrompt = getDailySystemPrompt(config.language);
+  const systemPrompt = buildSystemPromptWithMemory(getDailySystemPrompt(config.language));
   const entryDate = date || todayLocal();
   const userPrompt = buildUserPromptWithContext(text, entryDate, entryId);
 

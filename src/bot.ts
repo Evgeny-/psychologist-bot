@@ -5,7 +5,8 @@ import { queries } from './db/index.js';
 import { transcribeVoiceMessage } from './services/transcription.js';
 import { analyzeEntry } from './services/analysis.js';
 import { handleThreadReply } from './services/chat.js';
-import { generateTestWeeklyReport, generateTestMonthlyReport } from './services/reports.js';
+import { generateTestWeeklyReport, generateTestMonthlyReport, generateMemory } from './services/reports.js';
+import { MEMORY_MAX_LENGTH } from './prompts/memory.js';
 import { todayLocal, nowLocalTime, formatDateLocal } from './utils/date.js';
 import { sendSplitMessages } from './utils/telegram.js';
 import { ApiBalanceError } from './providers/asr/elevenlabs.js';
@@ -56,6 +57,49 @@ export function createBot(): Bot {
         await handleExportCommand(ctx.api, chatId);
       } catch (err) {
         console.error('Export error:', err);
+      }
+      return;
+    }
+
+    if (text === '/memory' || text.startsWith('/memory@')) {
+      try {
+        console.log('Channel command: /memory');
+        const memory = queries.getMemory();
+        const msg = memory
+          ? `<blockquote>🧠 Memory (${memory.length}/${MEMORY_MAX_LENGTH})</blockquote>\n\n${memory}\n\n#bot`
+          : (config.language === 'ru' ? 'Память пуста.\n\n#bot' : 'Memory is empty.\n\n#bot');
+        await ctx.api.sendMessage(chatId, msg, { parse_mode: 'HTML' });
+      } catch (err) {
+        console.error('Memory error:', err);
+      }
+      return;
+    }
+
+    if (text.startsWith('/setmemory ') || text.startsWith('/setmemory@')) {
+      try {
+        console.log('Channel command: /setmemory');
+        const content = text.replace(/^\/setmemory(@\S+)?\s+/, '').trim();
+        if (!content) {
+          await ctx.api.sendMessage(chatId, config.language === 'ru'
+            ? 'Использование: /setmemory <текст>\n\n#bot'
+            : 'Usage: /setmemory <text>\n\n#bot');
+          return;
+        }
+        const trimmed = content.slice(0, MEMORY_MAX_LENGTH);
+        queries.setMemory(trimmed);
+        await ctx.api.sendMessage(chatId, `<blockquote>🧠 Memory set (${trimmed.length}/${MEMORY_MAX_LENGTH})</blockquote>\n\n#bot`, { parse_mode: 'HTML' });
+      } catch (err) {
+        console.error('Set memory error:', err);
+      }
+      return;
+    }
+
+    if (text === '/generatememory' || text.startsWith('/generatememory@')) {
+      try {
+        console.log('Channel command: /generatememory');
+        await generateMemory(ctx.api, chatId);
+      } catch (err) {
+        console.error('Generate memory error:', err);
       }
       return;
     }

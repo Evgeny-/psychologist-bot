@@ -364,4 +364,13 @@ export class Queries {
       mood: number | null; anxiety: number | null; self_esteem: number | null; productivity: number | null;
     }>;
   }
+
+  getMemory(): string {
+    const row = this.db.prepare('SELECT content FROM memory WHERE id = 1').get() as { content: string } | undefined;
+    return row?.content ?? '';
+  }
+
+  setMemory(content: string): void {
+    this.db.prepare('UPDATE memory SET content = ?, updated_at = datetime(\'now\') WHERE id = 1').run(content);
+  }
 }

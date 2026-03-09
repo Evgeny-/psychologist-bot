@@ -7,6 +7,7 @@ import { t } from '../i18n/index.js';
 import { queries } from '../db/index.js';
 import { sendSplitMessages, sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
 import { formatDateLocal } from '../utils/date.js';
+import { getMemoryUpdatePrompt, MEMORY_MAX_LENGTH } from '../prompts/memory.js';
 
 // ~400k chars ≈ 100k tokens — keeps us under Sonnet's 200k limit with room for system prompt + response
 const MAX_CONTEXT_CHARS = 400_000;
@@ -111,6 +112,15 @@ function fitContext(summaries: DaySummary[], maxChars: number): string {
   return formatSummariesCompact(summaries);
 }
 
+function buildSystemPromptWithMemory(basePrompt: string): string {
+  const memory = queries.getMemory();
+  if (!memory) return basePrompt;
+  const label = config.language === 'ru'
+    ? '--- ПАМЯТЬ О ПОЛЬЗОВАТЕЛЕ (используй как контекст, не упоминай явно) ---'
+    : '--- USER MEMORY (use as context, do not mention explicitly) ---';
+  return `${basePrompt}\n\n${label}\n${memory}\n---`;
+}
+
 async function runWithProvider(
   api: Api,
   chatId: number,
@@ -166,7 +176,7 @@ async function runWeeklyReport(
   }
 
   const context = fitContext(summaries, MAX_CONTEXT_CHARS);
-  const systemPrompt = getWeeklySystemPrompt(config.language);
+  const systemPrompt = buildSystemPromptWithMemory(getWeeklySystemPrompt(config.language));
 
   const strings = t();
   const prefix = reportType === 'test_weekly' ? '🧪 TEST ' : '';
@@ -240,7 +250,7 @@ async function runMonthlyReport(
     fullContext = trimmedParts.join('\n\n---\n\n');
   }
 
-  const systemPrompt = getMonthlySystemPrompt(config.language);
+  const systemPrompt = buildSystemPromptWithMemory(getMonthlySystemPrompt(config.language));
 
   const strings = t();
   const prefix = reportType === 'test_monthly' ? '🧪 TEST ' : '';
@@ -269,6 +279,13 @@ export async function generateWeeklyReport(api: Api, chatId: number): Promise<vo
   const start = new Date(end);
   start.setDate(start.getDate() - 6);
   await runWeeklyReport(api, chatId, formatDateLocal(start), formatDateLocal(end), 'weekly');
+
+  // Auto-update memory after scheduled weekly report
+  try {
+    await updateMemoryFromReport(api, chatId);
+  } catch (err) {
+    console.error('Memory auto-update error:', err);
+  }
 }
 
 // Scheduled: previous full month
@@ -291,4 +308,95 @@ export async function generateTestMonthlyReport(api: Api, chatId: number): Promi
   const now = new Date();
   const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
   await runMonthlyReport(api, chatId, formatDateLocal(firstDay), formatDateLocal(now), 'test_monthly');
+}
+
+// Update memory using the latest weekly report
+async function updateMemoryFromReport(api: Api, chatId: number): Promise<void> {
+  // Get the most recent weekly report
+  const now = new Date();
+  const end = new Date(now);
+  end.setDate(end.getDate() - 1);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 6);
+  const reports = queries.getReportsByDateRange('weekly', formatDateLocal(start), formatDateLocal(end));
+  if (reports.length === 0) return;
+
+  const latestReport = reports[reports.length - 1];
+  const currentMemory = queries.getMemory();
+
+  const systemPrompt = getMemoryUpdatePrompt(config.language);
+  const userPrompt = config.language === 'ru'
+    ? `Текущая память:\n${currentMemory || '(пусто)'}\n\n--- Недельный отчёт (${latestReport.period_start} — ${latestReport.period_end}) ---\n${latestReport.report_text}`
+    : `Current memory:\n${currentMemory || '(empty)'}\n\n--- Weekly report (${latestReport.period_start} — ${latestReport.period_end}) ---\n${latestReport.report_text}`;
+
+  const llm = createLLMProvider();
+  const result = await llm.analyze(userPrompt, systemPrompt);
+  const newMemory = result.text.trim().slice(0, MEMORY_MAX_LENGTH);
+
+  if (newMemory) {
+    queries.setMemory(newMemory);
+    const costInfo = result.usage ? ` | $${result.usage.costUsd.toFixed(5)}` : '';
+    const msg = config.language === 'ru'
+      ? `<blockquote>🧠 Память обновлена${costInfo}</blockquote>\n\n#bot`
+      : `<blockquote>🧠 Memory updated${costInfo}</blockquote>\n\n#bot`;
+    await api.sendMessage(chatId, msg, { parse_mode: 'HTML' });
+  }
+}
+
+// Generate/update memory on demand (from /generatememory command)
+export async function generateMemory(api: Api, chatId: number): Promise<void> {
+  // Use last 4 weeks of weekly reports + recent daily summaries as context
+  const now = new Date();
+  const fourWeeksAgo = new Date(now);
+  fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28);
+  const startStr = formatDateLocal(fourWeeksAgo);
+  const endStr = formatDateLocal(now);
+
+  const weeklyReports = [
+    ...queries.getReportsByDateRange('weekly', startStr, endStr),
+    ...queries.getReportsByDateRange('test_weekly', startStr, endStr),
+  ].sort((a, b) => a.period_start.localeCompare(b.period_start));
+
+  const summaries = buildDaySummaries(startStr, endStr);
+
+  if (weeklyReports.length === 0 && summaries.length === 0) {
+    const msg = config.language === 'ru'
+      ? 'Нет данных для генерации памяти.\n\n#bot'
+      : 'No data to generate memory.\n\n#bot';
+    await api.sendMessage(chatId, msg);
+    return;
+  }
+
+  const parts: string[] = [];
+  if (weeklyReports.length > 0) {
+    parts.push('=== Weekly Reports ===');
+    for (const r of weeklyReports) {
+      parts.push(`[${r.period_start} — ${r.period_end}]\n${r.report_text}`);
+    }
+  }
+  if (summaries.length > 0) {
+    parts.push('=== Recent Entries ===');
+    parts.push(formatSummariesCompact(summaries));
+  }
+
+  const context = parts.join('\n\n---\n\n').slice(0, MAX_CONTEXT_CHARS);
+  const currentMemory = queries.getMemory();
+
+  const systemPrompt = getMemoryUpdatePrompt(config.language);
+  const userPrompt = config.language === 'ru'
+    ? `Текущая память:\n${currentMemory || '(пусто)'}\n\n${context}`
+    : `Current memory:\n${currentMemory || '(empty)'}\n\n${context}`;
+
+  const llm = createLLMProvider();
+  const result = await llm.analyze(userPrompt, systemPrompt);
+  const newMemory = result.text.trim().slice(0, MEMORY_MAX_LENGTH);
+
+  if (newMemory) {
+    queries.setMemory(newMemory);
+    const costInfo = result.usage ? ` | $${result.usage.costUsd.toFixed(5)}` : '';
+    const header = config.language === 'ru'
+      ? `<blockquote>🧠 Память сгенерирована${costInfo}</blockquote>`
+      : `<blockquote>🧠 Memory generated${costInfo}</blockquote>`;
+    await sendRawHtmlMessages(api, chatId, `${header}\n\n${newMemory}\n\n#bot`);
+  }
 }

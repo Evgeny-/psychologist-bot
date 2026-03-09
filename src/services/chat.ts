@@ -5,6 +5,15 @@ import { config } from '../config.js';
 import { sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
 import { queries } from '../db/index.js';
 
+function buildSystemPromptWithMemory(basePrompt: string): string {
+  const memory = queries.getMemory();
+  if (!memory) return basePrompt;
+  const label = config.language === 'ru'
+    ? '--- ПАМЯТЬ О ПОЛЬЗОВАТЕЛЕ (используй как контекст, не упоминай явно) ---'
+    : '--- USER MEMORY (use as context, do not mention explicitly) ---';
+  return `${basePrompt}\n\n${label}\n${memory}\n---`;
+}
+
 export async function handleThreadReply(
   api: Api,
   chatId: number,
@@ -12,7 +21,7 @@ export async function handleThreadReply(
   userMessage: string,
   replyToMessageId?: number,
 ): Promise<void> {
-  const systemPrompt = getChatSystemPrompt(config.language);
+  const systemPrompt = buildSystemPromptWithMemory(getChatSystemPrompt(config.language));
 
   const history = queries.getThreadMessages(threadId);
   const messages: ChatMessage[] = history.map((m) => ({

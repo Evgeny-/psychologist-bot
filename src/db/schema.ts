@@ -105,6 +105,14 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS memory (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      content TEXT NOT NULL DEFAULT '',
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    INSERT OR IGNORE INTO memory (id, content) VALUES (1, '');
+
     CREATE INDEX IF NOT EXISTS idx_entries_date ON entries(date);
     CREATE INDEX IF NOT EXISTS idx_metrics_date ON metrics(date);
     CREATE INDEX IF NOT EXISTS idx_reports_period ON reports(type, period_start);

@@ -89,24 +89,56 @@ function formatMetricsLine(metrics: ExtractedMetrics): string {
   return `\n<blockquote>📊 ${parts.join(' | ')}</blockquote>`;
 }
 
+function getYesterdayDate(date: string): string {
+  const d = new Date(date + 'T12:00:00');
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().split('T')[0];
+}
+
 function buildUserPromptWithContext(text: string, date: string, entryId: number): string {
   const earlier = queries.getEarlierEntriesForDate(date, entryId);
-  if (earlier.length === 0) return text;
+  const yesterday = getYesterdayDate(date);
+  const yesterdayEntries = queries.getEntriesByDateRange(yesterday, yesterday);
 
-  const contextParts = earlier.map((e, i) => {
-    const entryText = e.transcript || e.raw_text || '';
-    let part = `[Earlier entry ${i + 1}]\n${entryText}`;
-    if (e.analysis_text) {
-      part += `\n\n[Your previous analysis]\n${e.analysis_text}`;
+  const sections: string[] = [];
+
+  let yesterdayBlock: string | null = null;
+  if (yesterdayEntries.length > 0) {
+    const yesterdayTranscripts = yesterdayEntries
+      .map((e, i) => `[Вчерашняя запись ${i + 1}]\n${e.transcript || e.raw_text || ''}`)
+      .join('\n\n---\n\n');
+    yesterdayBlock = config.language === 'ru'
+      ? `--- КОНТЕКСТ: записи ЗА ВЧЕРА (только для фоновой связи мыслей, НЕ анализируй их, НЕ упоминай явно) ---\n\n${yesterdayTranscripts}\n\n--- КОНЕЦ ВЧЕРАШНЕГО КОНТЕКСТА ---`
+      : `--- BACKGROUND CONTEXT: yesterday's entries (for continuity only — do NOT analyze them, do NOT reference them explicitly) ---\n\n${yesterdayTranscripts}\n\n--- END YESTERDAY CONTEXT ---`;
+  }
+
+  let earlierBlock: string | null = null;
+  if (earlier.length > 0) {
+    const contextParts = earlier.map((e, i) => {
+      const entryText = e.transcript || e.raw_text || '';
+      let part = `[Earlier entry ${i + 1}]\n${entryText}`;
+      if (e.analysis_text) {
+        part += `\n\n[Your previous analysis]\n${e.analysis_text}`;
+      }
+      return part;
+    });
+    earlierBlock = config.language === 'ru'
+      ? `--- КОНТЕКСТ: предыдущие записи за сегодня (только для справки, НЕ анализируй их повторно) ---\n\n${contextParts.join('\n\n---\n\n')}\n\n--- ТЕКУЩАЯ ЗАПИСЬ (анализируй именно её) ---`
+      : `--- CONTEXT: earlier entries from today (for reference only, do NOT re-analyze them) ---\n\n${contextParts.join('\n\n---\n\n')}\n\n--- CURRENT ENTRY (analyze this one) ---`;
+  }
+
+  if (yesterdayBlock) {
+    const estimatedTotal = text.length + yesterdayBlock.length + (earlierBlock?.length ?? 0);
+    if (estimatedTotal <= 100_000) {
+      sections.push(yesterdayBlock);
     }
-    return part;
-  });
+  }
 
-  const contextBlock = config.language === 'ru'
-    ? `--- КОНТЕКСТ: предыдущие записи за сегодня (только для справки, НЕ анализируй их повторно) ---\n\n${contextParts.join('\n\n---\n\n')}\n\n--- ТЕКУЩАЯ ЗАПИСЬ (анализируй именно её) ---\n\n`
-    : `--- CONTEXT: earlier entries from today (for reference only, do NOT re-analyze them) ---\n\n${contextParts.join('\n\n---\n\n')}\n\n--- CURRENT ENTRY (analyze this one) ---\n\n`;
+  if (earlierBlock) sections.push(earlierBlock);
 
-  return contextBlock + text;
+  if (sections.length === 0) return text;
+
+  return sections.join('\n\n') + '\n\n' + text;
 }
 
 function buildSystemPromptWithMemory(basePrompt: string): string {

@@ -8,7 +8,7 @@ import { handleThreadReply } from './services/chat.js';
 import { generateTestWeeklyReport, generateTestMonthlyReport, generateMemory } from './services/reports.js';
 import { MEMORY_MAX_LENGTH } from './prompts/memory.js';
 import { todayLocal, nowLocalTime, formatDateLocal } from './utils/date.js';
-import { sendSplitMessages } from './utils/telegram.js';
+import { sendSplitMessages, sendRawHtmlMessages, notifyChannelPostForwarded, postChannelHeader } from './utils/telegram.js';
 import { ApiBalanceError } from './providers/asr/elevenlabs.js';
 import { ApiBalanceError as LLMBalanceError } from './providers/llm/claude.js';
 
@@ -22,85 +22,53 @@ export function createBot(): Bot {
     const chatId = ctx.chat.id;
 
     if (text === '/weekly' || text.startsWith('/weekly@')) {
-      try {
-        console.log('Channel command: /weekly');
-        await generateTestWeeklyReport(ctx.api, chatId);
-      } catch (err) {
-        console.error('Weekly report error:', err);
-      }
+      console.log('Channel command: /weekly');
+      generateTestWeeklyReport(ctx.api, chatId).catch(err => console.error('Weekly report error:', err));
       return;
     }
 
     if (text === '/monthly' || text.startsWith('/monthly@')) {
-      try {
-        console.log('Channel command: /monthly');
-        await generateTestMonthlyReport(ctx.api, chatId);
-      } catch (err) {
-        console.error('Monthly report error:', err);
-      }
+      console.log('Channel command: /monthly');
+      generateTestMonthlyReport(ctx.api, chatId).catch(err => console.error('Monthly report error:', err));
       return;
     }
 
     if (text === '/stats' || text.startsWith('/stats@')) {
-      try {
-        console.log('Channel command: /stats');
-        await handleStatsCommand(ctx.api, chatId);
-      } catch (err) {
-        console.error('Stats error:', err);
-      }
+      console.log('Channel command: /stats');
+      handleStatsCommand(ctx.api, chatId).catch(err => console.error('Stats error:', err));
       return;
     }
 
     if (text === '/export' || text.startsWith('/export@')) {
-      try {
-        console.log('Channel command: /export');
-        await handleExportCommand(ctx.api, chatId);
-      } catch (err) {
-        console.error('Export error:', err);
-      }
+      console.log('Channel command: /export');
+      handleExportCommand(ctx.api, chatId).catch(err => console.error('Export error:', err));
       return;
     }
 
     if (text === '/memory' || text.startsWith('/memory@')) {
-      try {
-        console.log('Channel command: /memory');
-        const memory = queries.getMemory();
-        const msg = memory
-          ? `<blockquote>🧠 Memory (${memory.length}/${MEMORY_MAX_LENGTH})</blockquote>\n\n${memory}\n\n#bot`
-          : (config.language === 'ru' ? 'Память пуста.\n\n#bot' : 'Memory is empty.\n\n#bot');
-        await ctx.api.sendMessage(chatId, msg, { parse_mode: 'HTML' });
-      } catch (err) {
-        console.error('Memory error:', err);
-      }
+      console.log('Channel command: /memory');
+      handleMemoryCommand(ctx.api, chatId).catch(err => console.error('Memory error:', err));
       return;
     }
 
     if (text.startsWith('/setmemory ') || text.startsWith('/setmemory@')) {
-      try {
-        console.log('Channel command: /setmemory');
-        const content = text.replace(/^\/setmemory(@\S+)?\s+/, '').trim();
-        if (!content) {
-          await ctx.api.sendMessage(chatId, config.language === 'ru'
-            ? 'Использование: /setmemory <текст>\n\n#bot'
-            : 'Usage: /setmemory <text>\n\n#bot');
-          return;
-        }
-        const trimmed = content.slice(0, MEMORY_MAX_LENGTH);
-        queries.setMemory(trimmed);
-        await ctx.api.sendMessage(chatId, `<blockquote>🧠 Memory set (${trimmed.length}/${MEMORY_MAX_LENGTH})</blockquote>\n\n#bot`, { parse_mode: 'HTML' });
-      } catch (err) {
-        console.error('Set memory error:', err);
+      console.log('Channel command: /setmemory');
+      const content = text.replace(/^\/setmemory(@\S+)?\s+/, '').trim();
+      if (!content) {
+        ctx.api.sendMessage(chatId, config.language === 'ru'
+          ? 'Использование: /setmemory <текст>\n\n#bot'
+          : 'Usage: /setmemory <text>\n\n#bot').catch(() => {});
+        return;
       }
+      const trimmed = content.slice(0, MEMORY_MAX_LENGTH);
+      queries.setMemory(trimmed);
+      ctx.api.sendMessage(chatId, `<blockquote>🧠 Memory set (${trimmed.length}/${MEMORY_MAX_LENGTH})</blockquote>\n\n#bot`, { parse_mode: 'HTML' }).catch(() => {});
       return;
     }
 
     if (text === '/generatememory' || text.startsWith('/generatememory@')) {
-      try {
-        console.log('Channel command: /generatememory');
-        await generateMemory(ctx.api, chatId);
-      } catch (err) {
-        console.error('Generate memory error:', err);
-      }
+      console.log('Channel command: /generatememory');
+      generateMemory(ctx.api, chatId).catch(err => console.error('Generate memory error:', err));
       return;
     }
 
@@ -132,6 +100,14 @@ export function createBot(): Bot {
 async function handleMessage(ctx: Context): Promise<void> {
   const msg = ctx.message;
   if (!msg) return;
+
+  // Register forwarded channel posts for the channel-to-comments pattern
+  if (msg.forward_origin && 'message_id' in msg.forward_origin) {
+    notifyChannelPostForwarded(
+      (msg.forward_origin as { message_id: number }).message_id,
+      msg.message_id,
+    );
+  }
 
   // Skip forwarded bot-generated posts (tagged with #bot) and commands
   if (msg.forward_origin) {
@@ -309,10 +285,20 @@ async function handleStatsCommand(api: import('grammy').Api, chatId: number): Pr
     }
   }
 
-  lines.push('');
-  lines.push('#bot');
+  const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `📊 ${strings.statsHeader}\n\n#bot`);
+  await sendRawHtmlMessages(api, target.chatId, lines.join('\n'), target.replyToMessageId);
+}
 
-  await api.sendMessage(chatId, lines.join('\n'), { parse_mode: 'HTML' });
+async function handleMemoryCommand(api: import('grammy').Api, chatId: number): Promise<void> {
+  const memory = queries.getMemory();
+  if (!memory) {
+    await api.sendMessage(chatId, config.language === 'ru' ? 'Память пуста.\n\n#bot' : 'Memory is empty.\n\n#bot');
+    return;
+  }
+
+  const header = `🧠 Memory (${memory.length}/${MEMORY_MAX_LENGTH})\n\n#bot`;
+  const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, header);
+  await sendRawHtmlMessages(api, target.chatId, memory, target.replyToMessageId);
 }
 
 async function handleExportCommand(api: import('grammy').Api, chatId: number): Promise<void> {
@@ -324,17 +310,18 @@ async function handleExportCommand(api: import('grammy').Api, chatId: number): P
     return;
   }
 
-  const header = 'date,local_time,type,mood,anxiety,self_esteem,productivity,text';
+  const csvHeader = 'date,local_time,type,mood,anxiety,self_esteem,productivity,text';
   const rows = data.map((r) => {
     const text = (r.text || '').replace(/"/g, '""').replace(/\n/g, ' ');
     return `${r.date},${r.local_time || ''},${r.type},${r.mood ?? ''},${r.anxiety ?? ''},${r.self_esteem ?? ''},${r.productivity ?? ''},"${text}"`;
   });
 
-  const csv = [header, ...rows].join('\n');
+  const csv = [csvHeader, ...rows].join('\n');
   const buffer = Buffer.from(csv, 'utf-8');
 
-  await api.sendDocument(chatId, new InputFile(buffer, 'cbt-export.csv'), {
-    caption: `Export: ${data.length} entries\n\n#bot`,
+  const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `📤 Export: ${data.length} entries\n\n#bot`);
+  await api.sendDocument(target.chatId, new InputFile(buffer, 'cbt-export.csv'), {
+    reply_to_message_id: target.replyToMessageId,
   });
 }
 

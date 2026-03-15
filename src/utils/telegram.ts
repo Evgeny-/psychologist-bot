@@ -120,6 +120,57 @@ export async function sendRawHtmlMessages(
   return messageIds;
 }
 
+// --- Channel-to-comments pattern ---
+// When a bot posts to a channel with a linked discussion group, Telegram auto-forwards
+// the message to the group. We capture that forwarded message ID to post replies as "comments".
+
+const pendingForwards = new Map<number, (groupMsgId: number) => void>();
+
+/** Call from the message handler when a forwarded channel post arrives in the group. */
+export function notifyChannelPostForwarded(channelMsgId: number, groupMsgId: number): void {
+  const resolve = pendingForwards.get(channelMsgId);
+  if (resolve) {
+    resolve(groupMsgId);
+    pendingForwards.delete(channelMsgId);
+  }
+}
+
+export interface CommentTarget {
+  chatId: number;
+  replyToMessageId?: number;
+}
+
+/**
+ * Send a short header to the channel, then return where to post the full content as comments.
+ * If discussionGroupId is set, waits for the auto-forwarded message and returns the group + thread ID.
+ * Falls back to posting directly to the channel on timeout or if no group is configured.
+ */
+export async function postChannelHeader(
+  api: Api,
+  channelId: number,
+  groupId: number | undefined,
+  headerHtml: string,
+): Promise<CommentTarget> {
+  const channelMsg = await api.sendMessage(channelId, headerHtml, { parse_mode: 'HTML' });
+
+  if (!groupId) {
+    return { chatId: channelId };
+  }
+
+  try {
+    const groupMsgId = await new Promise<number>((resolve, reject) => {
+      pendingForwards.set(channelMsg.message_id, resolve);
+      setTimeout(() => {
+        pendingForwards.delete(channelMsg.message_id);
+        reject(new Error('Timeout'));
+      }, 10000);
+    });
+    return { chatId: groupId, replyToMessageId: groupMsgId };
+  } catch {
+    return { chatId: channelId };
+  }
+}
+
 export async function downloadFileBuffer(api: Api, fileId: string): Promise<Buffer> {
   const file = await api.getFile(fileId);
   if (!file.file_path) throw new Error('No file_path in getFile response');

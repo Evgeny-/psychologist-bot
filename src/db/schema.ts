@@ -37,6 +37,16 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
     } catch { /* table may not exist yet */ }
   }
 
+  // Migration: add emotions_json, triggers_json, wins_json columns to analyses
+  const hasEmotions = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('analyses') WHERE name='emotions_json'").get() as { cnt: number };
+  if (hasEmotions.cnt === 0) {
+    try {
+      db.exec("ALTER TABLE analyses ADD COLUMN emotions_json TEXT");
+      db.exec("ALTER TABLE analyses ADD COLUMN triggers_json TEXT");
+      db.exec("ALTER TABLE analyses ADD COLUMN wins_json TEXT");
+    } catch { /* table may not exist yet */ }
+  }
+
   // Migration: add local_time column to entries
   const hasLocalTime = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('entries') WHERE name='local_time'").get() as { cnt: number };
   if (hasLocalTime.cnt === 0) {
@@ -65,6 +75,9 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
       distortions_json TEXT,
       topics_json TEXT,
       action_items_json TEXT,
+      emotions_json TEXT,
+      triggers_json TEXT,
+      wins_json TEXT,
       gratitude_count INTEGER DEFAULT 0,
       llm_provider TEXT,
       llm_model TEXT,

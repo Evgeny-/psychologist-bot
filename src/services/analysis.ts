@@ -9,6 +9,9 @@ import { queries } from '../db/index.js';
 
 interface AnalysisResult {
   sentiment?: string;
+  emotions?: string[];
+  triggers?: string[];
+  wins?: string[];
   distortions?: Array<{ type: string; quote: string; reframe: string }>;
   gratitude?: string[];
   action_items?: string[];
@@ -63,9 +66,12 @@ function saveAnalysis(entryId: number, responseText: string, llm: LLMProvider): 
     entry_id: entryId,
     analysis_text: freeform,
     sentiment: parsed?.sentiment,
-    distortions_json: parsed?.distortions ? JSON.stringify(parsed.distortions) : undefined,
-    topics_json: parsed?.topics ? JSON.stringify(parsed.topics) : undefined,
-    action_items_json: parsed?.action_items ? JSON.stringify(parsed.action_items) : undefined,
+    distortions_json: parsed?.distortions?.length ? JSON.stringify(parsed.distortions) : undefined,
+    topics_json: parsed?.topics?.length ? JSON.stringify(parsed.topics) : undefined,
+    action_items_json: parsed?.action_items?.length ? JSON.stringify(parsed.action_items) : undefined,
+    emotions_json: parsed?.emotions?.length ? JSON.stringify(parsed.emotions) : undefined,
+    triggers_json: parsed?.triggers?.length ? JSON.stringify(parsed.triggers) : undefined,
+    wins_json: parsed?.wins?.length ? JSON.stringify(parsed.wins) : undefined,
     gratitude_count: parsed?.gratitude_count ?? parsed?.gratitude?.length ?? 0,
     llm_provider: llm.providerName,
     llm_model: llm.modelName,

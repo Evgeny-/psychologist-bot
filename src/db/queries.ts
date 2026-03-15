@@ -21,6 +21,9 @@ export interface AnalysisRow {
   distortions_json: string | null;
   topics_json: string | null;
   action_items_json: string | null;
+  emotions_json: string | null;
+  triggers_json: string | null;
+  wins_json: string | null;
   gratitude_count: number;
   llm_provider: string | null;
   llm_model: string | null;
@@ -102,13 +105,16 @@ export class Queries {
     distortions_json?: string;
     topics_json?: string;
     action_items_json?: string;
+    emotions_json?: string;
+    triggers_json?: string;
+    wins_json?: string;
     gratitude_count?: number;
     llm_provider?: string;
     llm_model?: string;
   }): number {
     const stmt = this.db.prepare(`
-      INSERT INTO analyses (entry_id, analysis_text, sentiment, distortions_json, topics_json, action_items_json, gratitude_count, llm_provider, llm_model)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO analyses (entry_id, analysis_text, sentiment, distortions_json, topics_json, action_items_json, emotions_json, triggers_json, wins_json, gratitude_count, llm_provider, llm_model)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       analysis.entry_id,
@@ -117,6 +123,9 @@ export class Queries {
       analysis.distortions_json ?? null,
       analysis.topics_json ?? null,
       analysis.action_items_json ?? null,
+      analysis.emotions_json ?? null,
+      analysis.triggers_json ?? null,
+      analysis.wins_json ?? null,
       analysis.gratitude_count ?? 0,
       analysis.llm_provider ?? null,
       analysis.llm_model ?? null,

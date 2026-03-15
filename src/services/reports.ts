@@ -5,7 +5,7 @@ import { getMonthlySystemPrompt } from '../prompts/monthly.js';
 import { config } from '../config.js';
 import { t } from '../i18n/index.js';
 import { queries } from '../db/index.js';
-import { sendSplitMessages, sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
+import { sendSplitMessages, sendRawHtmlMessages, markdownToHtml, postChannelHeader } from '../utils/telegram.js';
 import { formatDateLocal } from '../utils/date.js';
 import { getMemoryUpdatePrompt, MEMORY_MAX_LENGTH } from '../prompts/memory.js';
 
@@ -158,7 +158,7 @@ async function runWithProvider(
   }
   // meta is already HTML — send raw text (not through markdownToHtml) for the meta part
   const body = markdownToHtml(result.text.trim());
-  await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}\n\n#bot`, replyToMessageId);
+  await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}`, replyToMessageId);
 }
 
 async function runWeeklyReport(
@@ -167,11 +167,10 @@ async function runWeeklyReport(
   startStr: string,
   endStr: string,
   reportType: 'weekly' | 'test_weekly',
-  replyToMessageId?: number,
 ): Promise<void> {
   const summaries = buildDaySummaries(startStr, endStr);
   if (summaries.length === 0) {
-    await sendSplitMessages(api, chatId, `No entries found for ${startStr} — ${endStr}\n\n#bot`, replyToMessageId);
+    await sendSplitMessages(api, chatId, `No entries found for ${startStr} — ${endStr}\n\n#bot`);
     return;
   }
 
@@ -184,15 +183,18 @@ async function runWeeklyReport(
     .replace('{start}', startStr)
     .replace('{end}', endStr);
 
+  // Post short header to channel, get comment target for full content
+  const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `${title}\n\n#bot`);
+
   const providers = config.compareMode ? createAllLLMProviders() : [createLLMProvider()];
 
   for (const provider of providers) {
     try {
-      await runWithProvider(api, chatId, context, systemPrompt, title, reportType, startStr, endStr, provider, replyToMessageId);
+      await runWithProvider(api, target.chatId, context, systemPrompt, title, reportType, startStr, endStr, provider, target.replyToMessageId);
     } catch (err) {
       const label = `${provider.providerName} (${provider.modelName})`;
       const errMsg = err instanceof Error ? err.message : String(err);
-      await sendRawHtmlMessages(api, chatId, `<blockquote>${title}\n${label}</blockquote>\n\nError: ${errMsg}\n\n#bot`, replyToMessageId);
+      await sendRawHtmlMessages(api, target.chatId, `<blockquote>${title}\n${label}</blockquote>\n\nError: ${errMsg}`, target.replyToMessageId);
     }
   }
 }
@@ -258,15 +260,18 @@ async function runMonthlyReport(
     .replace('{start}', startStr)
     .replace('{end}', endStr);
 
+  // Post short header to channel, get comment target for full content
+  const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `${title}\n\n#bot`);
+
   const providers = config.compareMode ? createAllLLMProviders() : [createLLMProvider()];
 
   for (const provider of providers) {
     try {
-      await runWithProvider(api, chatId, fullContext, systemPrompt, title, reportType, startStr, endStr, provider);
+      await runWithProvider(api, target.chatId, fullContext, systemPrompt, title, reportType, startStr, endStr, provider, target.replyToMessageId);
     } catch (err) {
       const label = `${provider.providerName} (${provider.modelName})`;
       const errMsg = err instanceof Error ? err.message : String(err);
-      await sendRawHtmlMessages(api, chatId, `<blockquote>${title}\n${label}</blockquote>\n\nError: ${errMsg}\n\n#bot`);
+      await sendRawHtmlMessages(api, target.chatId, `<blockquote>${title}\n${label}</blockquote>\n\nError: ${errMsg}`, target.replyToMessageId);
     }
   }
 }
@@ -336,10 +341,11 @@ async function updateMemoryFromReport(api: Api, chatId: number): Promise<void> {
   if (newMemory) {
     queries.setMemory(newMemory);
     const costInfo = result.usage ? ` | $${result.usage.costUsd.toFixed(5)}` : '';
-    const msg = config.language === 'ru'
-      ? `<blockquote>🧠 Память обновлена${costInfo}</blockquote>\n\n#bot`
-      : `<blockquote>🧠 Memory updated${costInfo}</blockquote>\n\n#bot`;
-    await api.sendMessage(chatId, msg, { parse_mode: 'HTML' });
+    const headerText = config.language === 'ru'
+      ? `🧠 Память обновлена${costInfo}`
+      : `🧠 Memory updated${costInfo}`;
+    const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `${headerText}\n\n#bot`);
+    await sendRawHtmlMessages(api, target.chatId, newMemory, target.replyToMessageId);
   }
 }
 
@@ -394,9 +400,10 @@ export async function generateMemory(api: Api, chatId: number): Promise<void> {
   if (newMemory) {
     queries.setMemory(newMemory);
     const costInfo = result.usage ? ` | $${result.usage.costUsd.toFixed(5)}` : '';
-    const header = config.language === 'ru'
-      ? `<blockquote>🧠 Память сгенерирована${costInfo}</blockquote>`
-      : `<blockquote>🧠 Memory generated${costInfo}</blockquote>`;
-    await sendRawHtmlMessages(api, chatId, `${header}\n\n${newMemory}\n\n#bot`);
+    const headerText = config.language === 'ru'
+      ? `🧠 Память сгенерирована${costInfo}`
+      : `🧠 Memory generated${costInfo}`;
+    const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `${headerText}\n\n#bot`);
+    await sendRawHtmlMessages(api, target.chatId, newMemory, target.replyToMessageId);
   }
 }

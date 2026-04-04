@@ -29,12 +29,14 @@ export function createTTSProvider(): TTSProvider {
         config.keys.elevenlabs,
         config.tts.elevenlabsModel,
         config.tts.elevenlabsVoiceId,
+        config.tts.elevenlabsSpeed,
       );
     case 'openai':
       return new OpenAITTS(
         config.keys.openai,
         config.tts.openaiModel,
         config.tts.openaiVoice,
+        config.tts.openaiSpeed,
       );
     default:
       throw new Error(`Unknown TTS provider: ${config.tts.provider}`);

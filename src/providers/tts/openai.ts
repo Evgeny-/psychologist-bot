@@ -20,6 +20,7 @@ export class OpenAITTS implements TTSProvider {
     apiKey: string,
     private model: string,
     private voice: string,
+    private speed: number,
   ) {
     if (!apiKey) throw new Error('OPENAI_API_KEY is required for OpenAI TTS');
     this.client = new OpenAI({ apiKey });
@@ -36,6 +37,7 @@ export class OpenAITTS implements TTSProvider {
         voice: this.voice,
         input: text,
         response_format: 'mp3',
+        speed: this.speed,
       }));
 
       const arrayBuffer = await response.arrayBuffer();

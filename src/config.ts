@@ -35,9 +35,11 @@ export const config = {
   tts: {
     provider: (process.env.TTS_PROVIDER || 'elevenlabs') as TTSProviderType,
     openaiModel: process.env.OPENAI_TTS_MODEL || 'tts-1',
-    openaiVoice: process.env.OPENAI_TTS_VOICE || 'alloy',
+    openaiVoice: process.env.OPENAI_TTS_VOICE || 'shimmer',
+    openaiSpeed: process.env.OPENAI_TTS_SPEED ? Number(process.env.OPENAI_TTS_SPEED) : 1.1,
     elevenlabsModel: process.env.ELEVENLABS_TTS_MODEL || 'eleven_flash_v2_5',
     elevenlabsVoiceId: process.env.ELEVENLABS_TTS_VOICE_ID || '',
+    elevenlabsSpeed: process.env.ELEVENLABS_TTS_SPEED ? Number(process.env.ELEVENLABS_TTS_SPEED) : 1.1,
   },
 
   compareMode: process.env.COMPARE_MODE === 'true',

@@ -20,20 +20,18 @@ function createFallbackTTS(): TTSProvider | null {
       config.keys.openai,
       config.tts.openaiModel,
       config.tts.openaiVoice,
+      config.tts.openaiSpeed,
     );
   }
   return null;
 }
 
 function providerLabel(tts: TTSProvider): string {
-  return `${tts.providerName} (${tts.modelName})`;
+  return tts.providerName;
 }
 
 function configuredPrimaryProviderLabel(): string {
-  if (config.tts.provider === 'elevenlabs') {
-    return `elevenlabs (${config.tts.elevenlabsModel})`;
-  }
-  return `openai (${config.tts.openaiModel})`;
+  return config.tts.provider;
 }
 
 function formatCredits(credits: number): string {
@@ -42,12 +40,10 @@ function formatCredits(credits: number): string {
 
 function buildCaption(meta: AudioReplyMeta, index: number, total: number): string {
   if (index > 0) {
-    return total > 1
-      ? `${t().audioReplyHeader} | ${index + 1}/${total}`
-      : t().audioReplyHeader;
+    return total > 1 ? `${meta.providerLabel} | ${index + 1}/${total}` : meta.providerLabel;
   }
 
-  const parts = [t().audioReplyHeader, meta.providerLabel];
+  const parts = [meta.providerLabel];
 
   if (meta.totalCostUsd !== undefined) {
     parts.push(`$${meta.totalCostUsd.toFixed(5)}`);
@@ -55,7 +51,6 @@ function buildCaption(meta: AudioReplyMeta, index: number, total: number): strin
   if (meta.totalCredits !== undefined) {
     parts.push(`${formatCredits(meta.totalCredits)} credits`);
   }
-  parts.push(`${meta.totalChars} chars`);
 
   if (total > 1) {
     parts.push(`${index + 1}/${total}`);

@@ -22,6 +22,7 @@ export class ElevenLabsTTS implements TTSProvider {
     private apiKey: string,
     private model: string,
     private voiceId: string,
+    private speed: number,
   ) {
     if (!apiKey) throw new Error('ELEVENLABS_API_KEY is required for ElevenLabs TTS');
     if (!voiceId) throw new Error('ELEVENLABS_TTS_VOICE_ID is required for ElevenLabs TTS');
@@ -43,6 +44,9 @@ export class ElevenLabsTTS implements TTSProvider {
         text,
         model_id: this.model,
         output_format: ELEVENLABS_OUTPUT_FORMAT,
+        voice_settings: {
+          speed: this.speed,
+        },
       }),
     }));
 

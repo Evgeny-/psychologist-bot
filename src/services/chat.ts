@@ -4,9 +4,18 @@ import { getChatSystemPrompt } from '../prompts/chat.js';
 import { config } from '../config.js';
 import { sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
 import { queries } from '../db/index.js';
-import { detectAudioReplyRequest } from './audio-intent.js';
 import { sendAudioReply } from './audio-replies.js';
 import { t } from '../i18n/index.js';
+
+interface ChatResponseEnvelope {
+  text?: string;
+  reply_audio_requested?: boolean;
+}
+
+interface ParsedChatResponse {
+  text: string;
+  wantsAudioReply: boolean;
+}
 
 function buildSystemPromptWithMemory(basePrompt: string): string {
   const memory = queries.getMemory();
@@ -17,6 +26,28 @@ function buildSystemPromptWithMemory(basePrompt: string): string {
   return `${basePrompt}\n\n${label}\n${memory}\n---`;
 }
 
+function parseChatResponseJson(text: string): ChatResponseEnvelope | null {
+  const match = text.match(/```json\s*([\s\S]*?)\s*```/);
+  const jsonText = match ? match[1] : text;
+  try {
+    return JSON.parse(jsonText) as ChatResponseEnvelope;
+  } catch {
+    return null;
+  }
+}
+
+function parseChatResponse(text: string): ParsedChatResponse {
+  const parsed = parseChatResponseJson(text);
+  const messageText = typeof parsed?.text === 'string' && parsed.text.trim()
+    ? parsed.text.trim()
+    : text.replace(/```json\s*[\s\S]*?\s*```/, '').trim() || text.trim();
+
+  return {
+    text: messageText,
+    wantsAudioReply: parsed?.reply_audio_requested === true,
+  };
+}
+
 export async function handleThreadReply(
   api: Api,
   chatId: number,
@@ -25,7 +56,6 @@ export async function handleThreadReply(
   replyToMessageId?: number,
 ): Promise<void> {
   const systemPrompt = buildSystemPromptWithMemory(getChatSystemPrompt(config.language));
-  const wantsAudioReply = await detectAudioReplyRequest(userMessage);
 
   const history = queries.getThreadMessages(threadId);
   const messages: ChatMessage[] = history.map((m) => ({
@@ -48,7 +78,8 @@ export async function handleThreadReply(
 
   const llm = createLLMProvider();
   const result = await llm.chat(messages, systemPrompt);
-  const text = result.text.trim();
+  const parsedResponse = parseChatResponse(result.text);
+  const text = parsedResponse.text;
 
   queries.insertThreadMessage({
     thread_id: threadId,
@@ -63,7 +94,7 @@ export async function handleThreadReply(
   const body = markdownToHtml(text);
   await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}`, replyToMessageId);
 
-  if (wantsAudioReply) {
+  if (parsedResponse.wantsAudioReply) {
     await sendAudioReply(api, chatId, text, replyToMessageId).catch(async (err) => {
       console.error('Audio reply error:', err);
       await sendRawHtmlMessages(api, chatId, t().audioReplyUnavailable, replyToMessageId).catch(() => {});
@@ -80,7 +111,6 @@ async function chatCompare(
   replyToMessageId?: number,
 ): Promise<void> {
   const providers = createAllLLMProviders();
-  const wantsAudioReply = await detectAudioReplyRequest(messages[messages.length - 1]?.content ?? '');
 
   const results = await Promise.allSettled(
     providers.map(async (llm) => {
@@ -101,7 +131,8 @@ async function chatCompare(
 
     if (settled.status === 'fulfilled') {
       const { result, llm, elapsed } = settled.value;
-      const text = result.text.trim();
+      const parsedResponse = parseChatResponse(result.text);
+      const text = parsedResponse.text;
 
       // Save first successful provider's response to thread for context continuity
       if (!threadSaved) {
@@ -122,7 +153,7 @@ async function chatCompare(
       const body = markdownToHtml(text);
       await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}`, replyToMessageId);
 
-      if (wantsAudioReply && !audioSent) {
+      if (parsedResponse.wantsAudioReply && !audioSent) {
         await sendAudioReply(api, chatId, text, replyToMessageId).catch(async (err) => {
           console.error('Audio reply error:', err);
           await sendRawHtmlMessages(api, chatId, t().audioReplyUnavailable, replyToMessageId).catch(() => {});

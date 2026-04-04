@@ -6,7 +6,6 @@ import { config } from '../config.js';
 import { t } from '../i18n/index.js';
 import { sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
 import { queries } from '../db/index.js';
-import { detectAudioReplyRequest } from './audio-intent.js';
 import { sendAudioReply } from './audio-replies.js';
 
 interface AnalysisResult {
@@ -25,6 +24,8 @@ interface AnalysisResult {
     self_esteem?: number | null;
     productivity?: number | null;
   };
+  analysis_text?: string;
+  reply_audio_requested?: boolean;
 }
 
 export interface ExtractedMetrics {
@@ -34,17 +35,27 @@ export interface ExtractedMetrics {
   productivity?: number;
 }
 
+interface ParsedAnalysisResponse {
+  parsed: AnalysisResult | null;
+  freeform: string;
+  metrics: ExtractedMetrics;
+  wantsAudioReply: boolean;
+}
+
 function parseAnalysisJson(text: string): AnalysisResult | null {
   const match = text.match(/```json\s*([\s\S]*?)\s*```/);
-  if (!match) return null;
+  const jsonText = match ? match[1] : text;
   try {
-    return JSON.parse(match[1]) as AnalysisResult;
+    return JSON.parse(jsonText) as AnalysisResult;
   } catch {
     return null;
   }
 }
 
-function extractFreeformAnalysis(text: string): string {
+function extractFreeformAnalysis(text: string, parsed: AnalysisResult | null): string {
+  if (typeof parsed?.analysis_text === 'string' && parsed.analysis_text.trim()) {
+    return parsed.analysis_text.trim();
+  }
   const afterJson = text.replace(/```json\s*[\s\S]*?\s*```/, '').trim();
   return afterJson || text;
 }
@@ -60,9 +71,21 @@ function extractMetrics(parsed: AnalysisResult | null): ExtractedMetrics {
   return result;
 }
 
-function saveAnalysis(entryId: number, responseText: string, llm: LLMProvider): ExtractedMetrics {
+function parseAnalysisResponse(responseText: string): ParsedAnalysisResponse {
   const parsed = parseAnalysisJson(responseText);
-  const freeform = extractFreeformAnalysis(responseText);
+  const freeform = extractFreeformAnalysis(responseText, parsed);
+  const metrics = extractMetrics(parsed);
+
+  return {
+    parsed,
+    freeform,
+    metrics,
+    wantsAudioReply: parsed?.reply_audio_requested === true,
+  };
+}
+
+function saveAnalysis(entryId: number, response: ParsedAnalysisResponse, llm: LLMProvider): ExtractedMetrics {
+  const { parsed, freeform, metrics } = response;
 
   queries.insertAnalysis({
     entry_id: entryId,
@@ -79,7 +102,7 @@ function saveAnalysis(entryId: number, responseText: string, llm: LLMProvider): 
     llm_model: llm.modelName,
   });
 
-  return extractMetrics(parsed);
+  return metrics;
 }
 
 function formatUsage(usage?: LLMUsage): string {
@@ -170,7 +193,6 @@ export async function analyzeEntry(
   const systemPrompt = buildSystemPromptWithMemory(getDailySystemPrompt(config.language));
   const entryDate = date || todayLocal();
   const userPrompt = buildUserPromptWithContext(text, entryDate, entryId);
-  const wantsAudioReply = await detectAudioReplyRequest(text);
 
   // Save user's diary entry as first thread message
   queries.insertThreadMessage({
@@ -180,16 +202,17 @@ export async function analyzeEntry(
   });
 
   if (config.compareMode) {
-    return analyzeCompare(api, chatId, entryId, userPrompt, systemPrompt, threadId, wantsAudioReply, replyToMessageId);
+    return analyzeCompare(api, chatId, entryId, userPrompt, systemPrompt, threadId, replyToMessageId);
   }
 
   const llm = createLLMProvider();
   const result = await llm.analyze(userPrompt, systemPrompt);
+  const parsedResponse = parseAnalysisResponse(result.text);
 
-  const metrics = saveAnalysis(entryId, result.text, llm);
+  const metrics = saveAnalysis(entryId, parsedResponse, llm);
 
   // Save analysis as assistant message in thread
-  const freeform = extractFreeformAnalysis(result.text);
+  const freeform = parsedResponse.freeform;
   queries.insertThreadMessage({
     thread_id: threadId,
     role: 'assistant',
@@ -204,7 +227,7 @@ export async function analyzeEntry(
   const metricsLine = formatMetricsLine(metrics);
   await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}${metricsLine}`, replyToMessageId);
 
-  if (wantsAudioReply) {
+  if (parsedResponse.wantsAudioReply) {
     await sendAudioReply(api, chatId, freeform, replyToMessageId).catch(async (err) => {
       console.error('Audio reply error:', err);
       await sendRawHtmlMessages(api, chatId, t().audioReplyUnavailable, replyToMessageId).catch(() => {});
@@ -220,7 +243,6 @@ async function analyzeCompare(
   text: string,
   systemPrompt: string,
   threadId: number,
-  wantsAudioReply: boolean,
   replyToMessageId?: number,
 ): Promise<ExtractedMetrics> {
   const providers = createAllLLMProviders();
@@ -245,13 +267,14 @@ async function analyzeCompare(
 
     if (settled.status === 'fulfilled') {
       const { result, llm, elapsed } = settled.value;
-      const metrics = saveAnalysis(entryId, result.text, llm);
+      const parsedResponse = parseAnalysisResponse(result.text);
+      const metrics = saveAnalysis(entryId, parsedResponse, llm);
 
       if (!threadSaved) {
         firstMetrics = metrics;
       }
 
-      const freeform = extractFreeformAnalysis(result.text);
+      const freeform = parsedResponse.freeform;
 
       // Save first successful provider's response as thread context for follow-up chat
       if (!threadSaved) {
@@ -269,7 +292,7 @@ async function analyzeCompare(
       const metricsLine = formatMetricsLine(metrics);
       await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}${metricsLine}`, replyToMessageId);
 
-      if (wantsAudioReply && !audioSent) {
+      if (parsedResponse.wantsAudioReply && !audioSent) {
         await sendAudioReply(api, chatId, freeform, replyToMessageId).catch(async (err) => {
           console.error('Audio reply error:', err);
           await sendRawHtmlMessages(api, chatId, t().audioReplyUnavailable, replyToMessageId).catch(() => {});

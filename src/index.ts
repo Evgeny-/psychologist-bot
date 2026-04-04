@@ -12,6 +12,10 @@ function getLlmModel(): string {
   return config.llm.provider === 'claude' ? config.llm.claudeModel : config.llm.openaiModel;
 }
 
+function getTtsModel(): string {
+  return config.tts.provider === 'elevenlabs' ? config.tts.elevenlabsModel : config.tts.openaiModel;
+}
+
 async function checkElevenLabsQuota(): Promise<string> {
   if (!config.keys.elevenlabs) return 'ElevenLabs: no key';
   try {
@@ -72,6 +76,7 @@ async function main() {
   console.log(`  Language: ${config.language}`);
   console.log(`  ASR: ${config.asr.provider} (${getAsrModel()})`);
   console.log(`  LLM: ${config.llm.provider} (${getLlmModel()})`);
+  console.log(`  TTS: ${config.tts.provider} (${getTtsModel()})`);
 
   const bot = createBot();
 
@@ -100,6 +105,7 @@ async function main() {
           '',
           `ASR: ${config.asr.provider} (${getAsrModel()})`,
           `LLM: ${config.llm.provider} (${getLlmModel()})`,
+          `TTS: ${config.tts.provider} (${getTtsModel()})`,
           config.compareMode
             ? `Compare: ON (claude/${config.llm.claudeModel} + openai/${config.llm.openaiModel})`
             : 'Compare: OFF',

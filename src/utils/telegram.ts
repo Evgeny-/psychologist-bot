@@ -92,7 +92,8 @@ export async function sendSplitMessages(
   for (let i = 0; i < chunks.length; i++) {
     const msg = await api.sendMessage(chatId, markdownToHtml(chunks[i]), {
       parse_mode: 'HTML',
-      reply_to_message_id: i === 0 ? replyToMessageId : undefined,
+      // Keep every chunk anchored to the same message so channel comments stay visible in-thread.
+      reply_to_message_id: replyToMessageId,
     });
     messageIds.push(msg.message_id);
   }
@@ -112,7 +113,8 @@ export async function sendRawHtmlMessages(
   for (let i = 0; i < chunks.length; i++) {
     const msg = await api.sendMessage(chatId, chunks[i], {
       parse_mode: 'HTML',
-      reply_to_message_id: i === 0 ? replyToMessageId : undefined,
+      // Keep every chunk anchored to the same message so channel comments stay visible in-thread.
+      reply_to_message_id: replyToMessageId,
     });
     messageIds.push(msg.message_id);
   }

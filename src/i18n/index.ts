@@ -5,6 +5,9 @@ import { en } from './en.js';
 export interface Strings {
   transcriptHeader: string;
   analysisHeader: string;
+  audioReplyHeader: string;
+  audioFallbackNotice: string;
+  audioReplyUnavailable: string;
   processingVoice: string;
   processingText: string;
   errorGeneric: string;

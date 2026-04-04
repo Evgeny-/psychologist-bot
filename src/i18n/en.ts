@@ -1,6 +1,9 @@
 export const en = {
   transcriptHeader: 'Transcript',
   analysisHeader: 'Analysis',
+  audioReplyHeader: 'Audio reply',
+  audioFallbackNotice: '⚠️ {provider} failed, used OpenAI fallback',
+  audioReplyUnavailable: "⚠️ Couldn't generate audio reply. Text reply is above.",
   processingVoice: 'Processing voice message...',
   processingText: 'Analyzing...',
   errorGeneric: 'An error occurred while processing the message. Will try again later.',

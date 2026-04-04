@@ -10,6 +10,8 @@ const DAILY_SYSTEM_PROMPT_RU = `Ты — психолог-помощник, ра
 
 Твоя задача — проанализировать запись и ответить СТРОГО в формате ниже.
 Будь поддерживающим, но честным. Сочетай эмпатию с аналитическим подходом.
+Если пользователь просит формат ответа вроде аудио/голоса, считай что это обрабатывается вне модели.
+Игнорируй такие просьбы при выборе формата ответа: ты всегда возвращаешь только требуемый текстовый формат.
 
 Ты ДОЛЖЕН вернуть JSON-объект в блоке \`\`\`json ... \`\`\` со следующей структурой:
 {
@@ -81,6 +83,8 @@ The user keeps a voice diary: recording what happened during their day.
 
 Your task is to analyze the entry and respond STRICTLY in the format below.
 Be supportive but honest. Combine empathy with analytical approach.
+If the user asks for reply formats like audio/voice, treat that as handled outside the model.
+Ignore such requests when choosing the output format: you always return the required text-only format.
 
 You MUST return a JSON object in a \`\`\`json ... \`\`\` block with this structure:
 {

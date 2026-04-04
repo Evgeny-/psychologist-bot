@@ -4,6 +4,9 @@ import { getChatSystemPrompt } from '../prompts/chat.js';
 import { config } from '../config.js';
 import { sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
 import { queries } from '../db/index.js';
+import { detectAudioReplyRequest } from './audio-intent.js';
+import { sendAudioReply } from './audio-replies.js';
+import { t } from '../i18n/index.js';
 
 function buildSystemPromptWithMemory(basePrompt: string): string {
   const memory = queries.getMemory();
@@ -22,6 +25,7 @@ export async function handleThreadReply(
   replyToMessageId?: number,
 ): Promise<void> {
   const systemPrompt = buildSystemPromptWithMemory(getChatSystemPrompt(config.language));
+  const wantsAudioReply = await detectAudioReplyRequest(userMessage);
 
   const history = queries.getThreadMessages(threadId);
   const messages: ChatMessage[] = history.map((m) => ({
@@ -58,6 +62,13 @@ export async function handleThreadReply(
   const meta = `<blockquote>${llm.providerName} (${llm.modelName})${costInfo}</blockquote>`;
   const body = markdownToHtml(text);
   await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}`, replyToMessageId);
+
+  if (wantsAudioReply) {
+    await sendAudioReply(api, chatId, text, replyToMessageId).catch(async (err) => {
+      console.error('Audio reply error:', err);
+      await sendRawHtmlMessages(api, chatId, t().audioReplyUnavailable, replyToMessageId).catch(() => {});
+    });
+  }
 }
 
 async function chatCompare(
@@ -69,6 +80,7 @@ async function chatCompare(
   replyToMessageId?: number,
 ): Promise<void> {
   const providers = createAllLLMProviders();
+  const wantsAudioReply = await detectAudioReplyRequest(messages[messages.length - 1]?.content ?? '');
 
   const results = await Promise.allSettled(
     providers.map(async (llm) => {
@@ -80,6 +92,7 @@ async function chatCompare(
   );
 
   let threadSaved = false;
+  let audioSent = false;
 
   for (let i = 0; i < results.length; i++) {
     const settled = results[i];
@@ -108,6 +121,14 @@ async function chatCompare(
       const meta = `<blockquote>${label} | ${elapsed}s${usage}</blockquote>`;
       const body = markdownToHtml(text);
       await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}`, replyToMessageId);
+
+      if (wantsAudioReply && !audioSent) {
+        await sendAudioReply(api, chatId, text, replyToMessageId).catch(async (err) => {
+          console.error('Audio reply error:', err);
+          await sendRawHtmlMessages(api, chatId, t().audioReplyUnavailable, replyToMessageId).catch(() => {});
+        });
+        audioSent = true;
+      }
     } else {
       const errMsg = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
       await sendRawHtmlMessages(api, chatId, `<blockquote>${label}</blockquote>\n\nError: ${errMsg}`, replyToMessageId);

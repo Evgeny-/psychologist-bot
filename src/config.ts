@@ -2,6 +2,7 @@ import 'dotenv/config';
 
 export type ASRProviderType = 'elevenlabs' | 'openai';
 export type LLMProviderType = 'claude' | 'openai';
+export type TTSProviderType = 'elevenlabs' | 'openai';
 export type BotLanguage = 'ru' | 'en';
 
 function required(name: string): string {
@@ -29,6 +30,14 @@ export const config = {
     provider: (process.env.LLM_PROVIDER || 'claude') as LLMProviderType,
     openaiModel: process.env.OPENAI_LLM_MODEL || 'gpt-5.4',
     claudeModel: process.env.CLAUDE_LLM_MODEL || 'claude-sonnet-4-6',
+  },
+
+  tts: {
+    provider: (process.env.TTS_PROVIDER || 'elevenlabs') as TTSProviderType,
+    openaiModel: process.env.OPENAI_TTS_MODEL || 'tts-1',
+    openaiVoice: process.env.OPENAI_TTS_VOICE || 'alloy',
+    elevenlabsModel: process.env.ELEVENLABS_TTS_MODEL || 'eleven_flash_v2_5',
+    elevenlabsVoiceId: process.env.ELEVENLABS_TTS_VOICE_ID || '',
   },
 
   compareMode: process.env.COMPARE_MODE === 'true',

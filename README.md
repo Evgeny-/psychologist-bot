@@ -13,6 +13,7 @@ Multiple entries per day? The bot sees your earlier entries as reference, so it 
 - **Voice diary** — post voice messages, auto-transcribed via ElevenLabs Scribe (OpenAI fallback if balance runs out)
 - **CBT analysis** — cognitive distortions, sentiment, gratitude, action items
 - **Thread conversations** — reply to discuss your entry using CBT techniques (Socratic dialogue, reframing)
+- **Audio replies on demand** — ask the bot to answer by voice/audio and it will synthesize the reply
 - **Same-day context** — later entries include earlier ones as reference, so the model sees the full picture
 - **Compare mode** — run Claude + OpenAI in parallel, see both analyses side by side
 - **Reports** — weekly and monthly summaries with smart context fitting
@@ -64,9 +65,14 @@ All settings via environment variables — see [.env.example](.env.example).
 Key ones:
 - `LLM_PROVIDER` — `claude` or `openai`
 - `ASR_PROVIDER` — `elevenlabs` or `openai`
+- `TTS_PROVIDER` — `elevenlabs` or `openai`
 - `COMPARE_MODE=true` — run all LLM providers in parallel
 - `BOT_LANGUAGE` — `ru` or `en`
 - `BOT_TIMEZONE` — for correct date calculations (e.g. `Europe/Amsterdam`)
+
+For voice replies:
+- Set `ELEVENLABS_TTS_VOICE_ID` if you want ElevenLabs TTS as the primary voice provider
+- Or rely on OpenAI TTS fallback with `OPENAI_TTS_MODEL` and `OPENAI_TTS_VOICE`
 
 ## Tech Stack
 

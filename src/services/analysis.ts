@@ -6,6 +6,8 @@ import { config } from '../config.js';
 import { t } from '../i18n/index.js';
 import { sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
 import { queries } from '../db/index.js';
+import { detectAudioReplyRequest } from './audio-intent.js';
+import { sendAudioReply } from './audio-replies.js';
 
 interface AnalysisResult {
   sentiment?: string;
@@ -168,6 +170,7 @@ export async function analyzeEntry(
   const systemPrompt = buildSystemPromptWithMemory(getDailySystemPrompt(config.language));
   const entryDate = date || todayLocal();
   const userPrompt = buildUserPromptWithContext(text, entryDate, entryId);
+  const wantsAudioReply = await detectAudioReplyRequest(text);
 
   // Save user's diary entry as first thread message
   queries.insertThreadMessage({
@@ -177,7 +180,7 @@ export async function analyzeEntry(
   });
 
   if (config.compareMode) {
-    return analyzeCompare(api, chatId, entryId, userPrompt, systemPrompt, threadId, replyToMessageId);
+    return analyzeCompare(api, chatId, entryId, userPrompt, systemPrompt, threadId, wantsAudioReply, replyToMessageId);
   }
 
   const llm = createLLMProvider();
@@ -200,6 +203,13 @@ export async function analyzeEntry(
   const body = markdownToHtml(freeform);
   const metricsLine = formatMetricsLine(metrics);
   await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}${metricsLine}`, replyToMessageId);
+
+  if (wantsAudioReply) {
+    await sendAudioReply(api, chatId, freeform, replyToMessageId).catch(async (err) => {
+      console.error('Audio reply error:', err);
+      await sendRawHtmlMessages(api, chatId, t().audioReplyUnavailable, replyToMessageId).catch(() => {});
+    });
+  }
   return metrics;
 }
 
@@ -210,6 +220,7 @@ async function analyzeCompare(
   text: string,
   systemPrompt: string,
   threadId: number,
+  wantsAudioReply: boolean,
   replyToMessageId?: number,
 ): Promise<ExtractedMetrics> {
   const providers = createAllLLMProviders();
@@ -225,6 +236,7 @@ async function analyzeCompare(
 
   let threadSaved = false;
   let firstMetrics: ExtractedMetrics = {};
+  let audioSent = false;
 
   for (let i = 0; i < results.length; i++) {
     const settled = results[i];
@@ -256,6 +268,14 @@ async function analyzeCompare(
       const body = markdownToHtml(freeform);
       const metricsLine = formatMetricsLine(metrics);
       await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}${metricsLine}`, replyToMessageId);
+
+      if (wantsAudioReply && !audioSent) {
+        await sendAudioReply(api, chatId, freeform, replyToMessageId).catch(async (err) => {
+          console.error('Audio reply error:', err);
+          await sendRawHtmlMessages(api, chatId, t().audioReplyUnavailable, replyToMessageId).catch(() => {});
+        });
+        audioSent = true;
+      }
     } else {
       const errMsg = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
       await sendRawHtmlMessages(api, chatId, `<blockquote>${label}</blockquote>\n\nError: ${errMsg}`, replyToMessageId);

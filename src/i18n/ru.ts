@@ -1,6 +1,9 @@
 export const ru = {
   transcriptHeader: 'Транскрипт',
   analysisHeader: 'Анализ',
+  audioReplyHeader: 'Аудио-ответ',
+  audioFallbackNotice: '⚠️ {provider} не сработал, использовал OpenAI fallback',
+  audioReplyUnavailable: '⚠️ Не удалось сгенерировать аудио-ответ. Текстовый ответ выше.',
   processingVoice: 'Обрабатываю голосовое сообщение...',
   processingText: 'Анализирую...',
   errorGeneric: 'Произошла ошибка при обработке сообщения. Попробую позже.',

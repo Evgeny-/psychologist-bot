@@ -15,10 +15,16 @@ jobs:
           username: ubuntu
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            set -euo pipefail
+            trap 'echo "Deploy failed. Recent service logs:"; sudo journalctl -u cbt-bot.service -n 80 --no-pager || true' ERR
+
             cd ~/cbt-bot
-            git pull origin main
-            npm install
-            npx tsc
+            git fetch --prune origin main
+            git reset --hard origin/main
+            git clean -fd
+            npm ci
+            npm run build
             sudo systemctl restart cbt-bot
             sleep 2
-            sudo systemctl is-active cbt-bot
+            sudo systemctl is-active --quiet cbt-bot
+            git rev-parse --short HEAD

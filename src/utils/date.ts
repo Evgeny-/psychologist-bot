@@ -10,6 +10,14 @@ export function formatDateLocal(d: Date): string {
   return d.toLocaleDateString('sv-SE', { timeZone: config.timezone });
 }
 
+/** Shift a YYYY-MM-DD date by a whole number of days without depending on server timezone. */
+export function shiftLocalDate(date: string, days: number): string {
+  const [year, month, day] = date.split('-').map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day));
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return shifted.toISOString().split('T')[0];
+}
+
 /** Current local time as HH:MM */
 export function nowLocalTime(): string {
   return new Date().toLocaleTimeString('en-GB', {

@@ -1,7 +1,7 @@
 import type { Api } from 'grammy';
 import { createLLMProvider, createAllLLMProviders, type LLMProvider, type LLMUsage } from '../providers/llm/index.js';
 import { getDailySystemPrompt } from '../prompts/daily.js';
-import { todayLocal } from '../utils/date.js';
+import { todayLocal, shiftLocalDate } from '../utils/date.js';
 import { config } from '../config.js';
 import { t } from '../i18n/index.js';
 import { sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
@@ -121,9 +121,7 @@ function formatMetricsLine(metrics: ExtractedMetrics): string {
 }
 
 function getYesterdayDate(date: string): string {
-  const d = new Date(date + 'T12:00:00');
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().split('T')[0];
+  return shiftLocalDate(date, -1);
 }
 
 function buildUserPromptWithContext(text: string, date: string, entryId: number): string {

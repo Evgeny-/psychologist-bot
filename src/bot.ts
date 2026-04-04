@@ -5,7 +5,7 @@ import { queries } from './db/index.js';
 import { transcribeVoiceMessage } from './services/transcription.js';
 import { analyzeEntry } from './services/analysis.js';
 import { handleThreadReply } from './services/chat.js';
-import { generateTestWeeklyReport, generateTestMonthlyReport, generateMemory } from './services/reports.js';
+import { generateTestWeeklyReport, generateTestMonthlyReport, generateTestMorningBrief, generateMemory } from './services/reports.js';
 import { MEMORY_MAX_LENGTH } from './prompts/memory.js';
 import { todayLocal, nowLocalTime, formatDateLocal } from './utils/date.js';
 import { sendSplitMessages, sendRawHtmlMessages, notifyChannelPostForwarded, postChannelHeader } from './utils/telegram.js';
@@ -30,6 +30,12 @@ export function createBot(): Bot {
     if (text === '/monthly' || text.startsWith('/monthly@')) {
       console.log('Channel command: /monthly');
       generateTestMonthlyReport(ctx.api, chatId).catch(err => console.error('Monthly report error:', err));
+      return;
+    }
+
+    if (text === '/morning' || text.startsWith('/morning@')) {
+      console.log('Channel command: /morning');
+      generateTestMorningBrief(ctx.api, chatId).catch(err => console.error('Morning brief error:', err));
       return;
     }
 

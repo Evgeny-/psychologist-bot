@@ -17,6 +17,8 @@ export interface Strings {
   reminderDay2plus: string;
   weeklyReportTitle: string;
   monthlyReportTitle: string;
+  morningBriefTitle: string;
+  morningBriefNoEntry: string;
   metricsAsk: string;
   streakInfo: string;
   statsHeader: string;

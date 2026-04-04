@@ -13,6 +13,8 @@ export const en = {
   reminderDay2plus: "It's been {days} days without entries. Even a short message is better than nothing.",
   weeklyReportTitle: 'Weekly Report ({start} — {end})',
   monthlyReportTitle: 'Monthly Report ({start} — {end})',
+  morningBriefTitle: 'Morning Brief',
+  morningBriefNoEntry: "There was no entry yesterday. Keep today's note simple, and try to check in tonight even with a short message.",
   metricsAsk: "Couldn't determine metrics from the entry. Please specify manually: mood, anxiety, self-esteem, productivity (0-10)",
   streakInfo: 'Streak: {streak} days. Keep it going!',
   statsHeader: 'Stats',

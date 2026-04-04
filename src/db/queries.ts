@@ -304,6 +304,13 @@ export class Queries {
     ).all(type, start, end) as ReportRow[];
   }
 
+  hasReportForPeriod(type: string, periodStart: string, periodEnd: string): boolean {
+    const row = this.db.prepare(
+      'SELECT 1 FROM reports WHERE type = ? AND period_start = ? AND period_end = ? LIMIT 1'
+    ).get(type, periodStart, periodEnd);
+    return !!row;
+  }
+
   /** Count consecutive days with entries ending at `today` */
   getStreak(today?: string): number {
     const rows = this.db.prepare(

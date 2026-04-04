@@ -15,6 +15,7 @@ Multiple entries per day? The bot sees your earlier entries as reference, so it 
 - **Thread conversations** — reply to discuss your entry using CBT techniques (Socratic dialogue, reframing)
 - **Audio replies on demand** — ask the bot to answer by voice/audio and it will synthesize the reply
 - **Same-day context** — later entries include earlier ones as reference, so the model sees the full picture
+- **Morning brief** — every morning the bot posts a short carry-over note to the main channel based on yesterday's diary context
 - **Compare mode** — run Claude + OpenAI in parallel, see both analyses side by side
 - **Reports** — weekly and monthly summaries with smart context fitting
 - **Metrics** — mood, anxiety, energy (0-10), extracted from your speech
@@ -31,6 +32,7 @@ Type these in the **channel** (not the discussion group):
 |---------|-------------|
 | `/weekly` | Generate weekly report (Monday → today) |
 | `/monthly` | Generate monthly report (1st → today) |
+| `/morning` | Generate today's morning brief manually |
 | `/stats` | Show streak, entry count, average metrics |
 | `/export` | Download all entries as CSV |
 
@@ -69,6 +71,8 @@ Key ones:
 - `COMPARE_MODE=true` — run all LLM providers in parallel
 - `BOT_LANGUAGE` — `ru` or `en`
 - `BOT_TIMEZONE` — for correct date calculations (e.g. `Europe/Amsterdam`)
+
+Scheduled jobs use `BOT_TIMEZONE`, including the daily morning brief at 08:00.
 
 For voice replies:
 - Set `ELEVENLABS_TTS_VOICE_ID` if you want ElevenLabs TTS as the primary voice provider

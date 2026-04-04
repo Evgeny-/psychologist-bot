@@ -2,11 +2,12 @@ import type { Api } from 'grammy';
 import { createLLMProvider, createAllLLMProviders, type LLMProvider } from '../providers/llm/index.js';
 import { getWeeklySystemPrompt } from '../prompts/weekly.js';
 import { getMonthlySystemPrompt } from '../prompts/monthly.js';
+import { getMorningSystemPrompt } from '../prompts/morning.js';
 import { config } from '../config.js';
 import { t } from '../i18n/index.js';
 import { queries } from '../db/index.js';
 import { sendSplitMessages, sendRawHtmlMessages, markdownToHtml, postChannelHeader } from '../utils/telegram.js';
-import { formatDateLocal } from '../utils/date.js';
+import { formatDateLocal, shiftLocalDate, todayLocal } from '../utils/date.js';
 import { getMemoryUpdatePrompt, MEMORY_MAX_LENGTH } from '../prompts/memory.js';
 
 // ~400k chars ≈ 100k tokens — keeps us under Sonnet's 200k limit with room for system prompt + response
@@ -32,6 +33,12 @@ interface DaySummary {
   llmResponse: string | null;
   threadFollowUp: ThreadMessage[] | null;
   metrics: string | null;
+}
+
+interface MorningBriefEnvelope {
+  message?: string;
+  grounding?: string[];
+  has_meaningful_carryover?: boolean;
 }
 
 function buildDaySummaries(start: string, end: string): DaySummary[] {
@@ -119,6 +126,53 @@ function buildSystemPromptWithMemory(basePrompt: string): string {
     ? '--- ПАМЯТЬ О ПОЛЬЗОВАТЕЛЕ (используй как контекст, не упоминай явно) ---'
     : '--- USER MEMORY (use as context, do not mention explicitly) ---';
   return `${basePrompt}\n\n${label}\n${memory}\n---`;
+}
+
+function parseMorningBriefJson(text: string): MorningBriefEnvelope | null {
+  const match = text.match(/```json\s*([\s\S]*?)\s*```/);
+  const jsonText = match ? match[1] : text;
+  try {
+    return JSON.parse(jsonText) as MorningBriefEnvelope;
+  } catch {
+    return null;
+  }
+}
+
+function parseMorningBriefText(text: string): string {
+  const parsed = parseMorningBriefJson(text);
+  if (typeof parsed?.message === 'string' && parsed.message.trim()) {
+    return parsed.message.trim();
+  }
+  return text.replace(/```json\s*[\s\S]*?\s*```/, '').trim() || text.trim();
+}
+
+function buildMorningBriefContext(today: string): { yesterday: string; context: string; hasYesterdayData: boolean } {
+  const yesterday = shiftLocalDate(today, -1);
+  const dayBefore = shiftLocalDate(today, -2);
+  const yesterdaySummaries = buildDaySummaries(yesterday, yesterday);
+
+  if (yesterdaySummaries.length === 0) {
+    return { yesterday, context: '', hasYesterdayData: false };
+  }
+
+  const primaryContext = fitContext(yesterdaySummaries, MAX_CONTEXT_CHARS - 60_000);
+  const parts = [
+    `Today morning date: ${today}`,
+    `Primary source day: ${yesterday}`,
+    `=== YESTERDAY (${yesterday}) ===\n${primaryContext}`,
+  ];
+
+  const dayBeforeSummaries = buildDaySummaries(dayBefore, dayBefore);
+  if (dayBeforeSummaries.length > 0) {
+    const secondaryContext = formatSummariesCompact(dayBeforeSummaries).slice(0, 60_000);
+    parts.push(`=== DAY BEFORE YESTERDAY (${dayBefore}) ===\n${secondaryContext}`);
+  }
+
+  return {
+    yesterday,
+    context: parts.join('\n\n---\n\n'),
+    hasYesterdayData: true,
+  };
 }
 
 async function runWithProvider(
@@ -276,6 +330,50 @@ async function runMonthlyReport(
   }
 }
 
+async function runMorningBrief(
+  api: Api,
+  chatId: number,
+  today: string,
+  reportType: 'morning_brief' | 'test_morning_brief',
+): Promise<void> {
+  const strings = t();
+  const prefix = reportType === 'test_morning_brief' ? '🧪 TEST ' : '';
+  const title = `${prefix}${strings.morningBriefTitle}`;
+
+  const { yesterday, context, hasYesterdayData } = buildMorningBriefContext(today);
+
+  if (!hasYesterdayData) {
+    const message = strings.morningBriefNoEntry;
+    queries.insertReport({
+      type: reportType,
+      period_start: yesterday,
+      period_end: today,
+      report_text: message,
+    });
+    const body = markdownToHtml(message);
+    await sendRawHtmlMessages(api, chatId, `<blockquote>${title}</blockquote>\n\n${body}\n\n#bot`);
+    return;
+  }
+
+  const systemPrompt = buildSystemPromptWithMemory(getMorningSystemPrompt(config.language));
+  const llm = createLLMProvider();
+  const result = await llm.analyze(context, systemPrompt);
+  const message = parseMorningBriefText(result.text);
+
+  queries.insertReport({
+    type: reportType,
+    period_start: yesterday,
+    period_end: today,
+    report_text: message,
+    llm_provider: llm.providerName,
+    llm_model: llm.modelName,
+  });
+
+  const costInfo = result.usage ? ` | $${result.usage.costUsd.toFixed(5)}` : '';
+  const body = markdownToHtml(message);
+  await sendRawHtmlMessages(api, chatId, `<blockquote>${title}${costInfo}</blockquote>\n\n${body}\n\n#bot`);
+}
+
 // Scheduled: previous full week (Mon-Sun)
 export async function generateWeeklyReport(api: Api, chatId: number): Promise<void> {
   const now = new Date();
@@ -301,6 +399,17 @@ export async function generateMonthlyReport(api: Api, chatId: number): Promise<v
   await runMonthlyReport(api, chatId, formatDateLocal(start), formatDateLocal(end), 'monthly');
 }
 
+export async function generateMorningBrief(api: Api, chatId: number): Promise<void> {
+  const today = todayLocal();
+  const yesterday = shiftLocalDate(today, -1);
+
+  if (queries.hasReportForPeriod('morning_brief', yesterday, today)) {
+    return;
+  }
+
+  await runMorningBrief(api, chatId, today, 'morning_brief');
+}
+
 // Command: current week so far (Monday → today)
 export async function generateTestWeeklyReport(api: Api, chatId: number): Promise<void> {
   const now = new Date();
@@ -313,6 +422,10 @@ export async function generateTestMonthlyReport(api: Api, chatId: number): Promi
   const now = new Date();
   const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
   await runMonthlyReport(api, chatId, formatDateLocal(firstDay), formatDateLocal(now), 'test_monthly');
+}
+
+export async function generateTestMorningBrief(api: Api, chatId: number): Promise<void> {
+  await runMorningBrief(api, chatId, todayLocal(), 'test_morning_brief');
 }
 
 // Update memory using the latest weekly report

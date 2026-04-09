@@ -1,5 +1,6 @@
 import type { Api } from 'grammy';
 import { logInfo, logWarn } from './logger.js';
+import { withRetry } from './retry.js';
 
 const MAX_MESSAGE_LENGTH = 4096;
 
@@ -211,19 +212,31 @@ export async function postChannelHeader(
 
 export async function downloadFileBuffer(api: Api, fileId: string): Promise<Buffer> {
   const start = Date.now();
-  const file = await api.getFile(fileId);
-  if (!file.file_path) throw new Error('No file_path in getFile response');
+  try {
+    const buffer = await withRetry(async () => {
+      const file = await api.getFile(fileId);
+      if (!file.file_path) throw new Error('No file_path in getFile response');
 
-  const url = `https://api.telegram.org/file/bot${api.token}/` + file.file_path;
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Failed to download file: ${response.status}`);
+      const url = `https://api.telegram.org/file/bot${api.token}/` + file.file_path;
+      const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
+      if (!response.ok) throw new Error(`Failed to download file: ${response.status}`);
 
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  logInfo('telegram.file_download.complete', {
-    fileId,
-    bytes: buffer.length,
-    elapsedMs: Date.now() - start,
-  });
-  return buffer;
+      const arrayBuffer = await response.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    }, { retries: 2, delayMs: 1500 });
+
+    logInfo('telegram.file_download.complete', {
+      fileId,
+      bytes: buffer.length,
+      elapsedMs: Date.now() - start,
+    });
+    return buffer;
+  } catch (err) {
+    logWarn('telegram.file_download.failed', {
+      fileId,
+      elapsedMs: Date.now() - start,
+      error: err,
+    });
+    throw err;
+  }
 }

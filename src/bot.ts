@@ -178,17 +178,19 @@ async function handleThreadMessage(ctx: Context, threadId: number): Promise<void
     const statusMsg = await ctx.reply(t().processingVoice, {
       reply_to_message_id: msg.message_id,
     });
+    try {
+      const { transcript } = await transcribeVoiceMessage(
+        ctx.api,
+        ctx.chat!.id,
+        fileId,
+        duration ?? 0,
+        msg.message_id,
+      );
 
-    const { transcript } = await transcribeVoiceMessage(
-      ctx.api,
-      ctx.chat!.id,
-      fileId,
-      duration ?? 0,
-      msg.message_id,
-    );
-
-    text = transcript;
-    await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
+      text = transcript;
+    } finally {
+      await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
+    }
     logInfo('bot.thread_message.transcribed', {
       chatId: ctx.chat?.id,
       messageId: msg.message_id,
@@ -280,24 +282,25 @@ async function handleNewEntry(ctx: Context): Promise<void> {
     const statusMsg = await ctx.reply(t().processingVoice, {
       reply_to_message_id: replyToId,
     });
+    try {
+      const { transcript } = await transcribeVoiceMessage(
+        ctx.api,
+        ctx.chat!.id,
+        fileId,
+        duration ?? 0,
+        replyToId,
+      );
 
-    const { transcript } = await transcribeVoiceMessage(
-      ctx.api,
-      ctx.chat!.id,
-      fileId,
-      duration ?? 0,
-      replyToId,
-    );
-
-    queries.updateEntryTranscript(entryId, transcript);
-    contentForAnalysis = transcript;
-
-    await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
+      queries.updateEntryTranscript(entryId, transcript);
+      contentForAnalysis = transcript;
+    } finally {
+      await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
+    }
     logInfo('bot.new_entry.transcribed', {
       entryId,
       chatId: ctx.chat?.id,
       messageId: msg.message_id,
-      transcriptChars: transcript.length,
+      transcriptChars: contentForAnalysis.length,
     });
   } else {
     contentForAnalysis = text!;

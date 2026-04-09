@@ -9,6 +9,7 @@ import { queries } from '../db/index.js';
 import { sendSplitMessages, sendRawHtmlMessages, markdownToHtml, postChannelHeader } from '../utils/telegram.js';
 import { formatDateLocal, shiftLocalDate, todayLocal } from '../utils/date.js';
 import { getMemoryUpdatePrompt, MEMORY_MAX_LENGTH } from '../prompts/memory.js';
+import { logError, logInfo, logWarn } from '../utils/logger.js';
 
 // ~400k chars ≈ 100k tokens — keeps us under Sonnet's 200k limit with room for system prompt + response
 const MAX_CONTEXT_CHARS = 400_000;
@@ -188,6 +189,18 @@ async function runWithProvider(
   replyToMessageId?: number,
 ): Promise<void> {
   const start = Date.now();
+  logInfo('report.llm.start', {
+    reportType,
+    title,
+    startDate: startStr,
+    endDate: endStr,
+    provider: provider.providerName,
+    model: provider.modelName,
+    contextChars: context.length,
+    systemChars: systemPrompt.length,
+    chatId,
+    replyToMessageId,
+  });
   const result = await provider.analyze(context, systemPrompt);
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
@@ -213,6 +226,19 @@ async function runWithProvider(
   // meta is already HTML — send raw text (not through markdownToHtml) for the meta part
   const body = markdownToHtml(result.text.trim());
   await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}`, replyToMessageId);
+  logInfo('report.llm.complete', {
+    reportType,
+    title,
+    startDate: startStr,
+    endDate: endStr,
+    provider: provider.providerName,
+    model: provider.modelName,
+    elapsedSec: elapsed,
+    outputChars: result.text.length,
+    inputTokens: result.usage?.inputTokens,
+    outputTokens: result.usage?.outputTokens,
+    costUsd: result.usage?.costUsd?.toFixed(5),
+  });
 }
 
 async function runWeeklyReport(
@@ -223,7 +249,15 @@ async function runWeeklyReport(
   reportType: 'weekly' | 'test_weekly',
 ): Promise<void> {
   const summaries = buildDaySummaries(startStr, endStr);
+  logInfo('report.weekly.start', {
+    reportType,
+    startDate: startStr,
+    endDate: endStr,
+    summaryCount: summaries.length,
+    chatId,
+  });
   if (summaries.length === 0) {
+    logWarn('report.weekly.empty', { reportType, startDate: startStr, endDate: endStr, chatId });
     await sendSplitMessages(api, chatId, `No entries found for ${startStr} — ${endStr}\n\n#bot`);
     return;
   }
@@ -246,6 +280,13 @@ async function runWeeklyReport(
     try {
       await runWithProvider(api, target.chatId, context, systemPrompt, title, reportType, startStr, endStr, provider, target.replyToMessageId);
     } catch (err) {
+      logError('report.weekly.provider_failed', err, {
+        reportType,
+        startDate: startStr,
+        endDate: endStr,
+        provider: provider.providerName,
+        model: provider.modelName,
+      });
       const label = `${provider.providerName} (${provider.modelName})`;
       const errMsg = err instanceof Error ? err.message : String(err);
       await sendRawHtmlMessages(api, target.chatId, `<blockquote>${title}\n${label}</blockquote>\n\nError: ${errMsg}`, target.replyToMessageId);
@@ -267,8 +308,22 @@ async function runMonthlyReport(
   );
 
   const summaries = buildDaySummaries(startStr, endStr);
+  logInfo('report.monthly.start', {
+    reportType,
+    startDate: startStr,
+    endDate: endStr,
+    summaryCount: summaries.length,
+    weeklyReportCount: allWeeklyReports.length,
+    chatId,
+  });
 
   if (summaries.length === 0 && allWeeklyReports.length === 0) {
+    logWarn('report.monthly.empty', {
+      reportType,
+      startDate: startStr,
+      endDate: endStr,
+      chatId,
+    });
     await sendSplitMessages(api, chatId, `No entries found for ${startStr} — ${endStr}\n\n#bot`);
     return;
   }
@@ -323,6 +378,13 @@ async function runMonthlyReport(
     try {
       await runWithProvider(api, target.chatId, fullContext, systemPrompt, title, reportType, startStr, endStr, provider, target.replyToMessageId);
     } catch (err) {
+      logError('report.monthly.provider_failed', err, {
+        reportType,
+        startDate: startStr,
+        endDate: endStr,
+        provider: provider.providerName,
+        model: provider.modelName,
+      });
       const label = `${provider.providerName} (${provider.modelName})`;
       const errMsg = err instanceof Error ? err.message : String(err);
       await sendRawHtmlMessages(api, target.chatId, `<blockquote>${title}\n${label}</blockquote>\n\nError: ${errMsg}`, target.replyToMessageId);
@@ -341,6 +403,14 @@ async function runMorningBrief(
   const title = `${prefix}${strings.morningBriefTitle}`;
 
   const { yesterday, context, hasYesterdayData } = buildMorningBriefContext(today);
+  logInfo('report.morning.start', {
+    reportType,
+    today,
+    yesterday,
+    hasYesterdayData,
+    contextChars: context.length,
+    chatId,
+  });
 
   if (!hasYesterdayData) {
     const message = strings.morningBriefNoEntry;
@@ -352,13 +422,26 @@ async function runMorningBrief(
     });
     const body = markdownToHtml(message);
     await sendRawHtmlMessages(api, chatId, `<blockquote>${title}</blockquote>\n\n${body}\n\n#bot`);
+    logWarn('report.morning.no_data', { reportType, today, yesterday, chatId });
     return;
   }
 
   const systemPrompt = buildSystemPromptWithMemory(getMorningSystemPrompt(config.language));
   const llm = createLLMProvider();
+  const start = Date.now();
   const result = await llm.analyze(context, systemPrompt);
   const message = parseMorningBriefText(result.text);
+  const parsed = parseMorningBriefJson(result.text);
+  if (!parsed) {
+    logWarn('report.morning.parse_fallback', {
+      reportType,
+      today,
+      yesterday,
+      provider: llm.providerName,
+      model: llm.modelName,
+      outputChars: result.text.length,
+    });
+  }
 
   queries.insertReport({
     type: reportType,
@@ -372,6 +455,20 @@ async function runMorningBrief(
   const costInfo = result.usage ? ` | $${result.usage.costUsd.toFixed(5)}` : '';
   const body = markdownToHtml(message);
   await sendRawHtmlMessages(api, chatId, `<blockquote>${title}${costInfo}</blockquote>\n\n${body}\n\n#bot`);
+  logInfo('report.morning.complete', {
+    reportType,
+    today,
+    yesterday,
+    provider: llm.providerName,
+    model: llm.modelName,
+    elapsedMs: Date.now() - start,
+    outputChars: message.length,
+    hasMeaningfulCarryover: parsed?.has_meaningful_carryover,
+    groundingCount: parsed?.grounding?.length,
+    inputTokens: result.usage?.inputTokens,
+    outputTokens: result.usage?.outputTokens,
+    costUsd: result.usage?.costUsd?.toFixed(5),
+  });
 }
 
 // Scheduled: previous full week (Mon-Sun)
@@ -387,7 +484,7 @@ export async function generateWeeklyReport(api: Api, chatId: number): Promise<vo
   try {
     await updateMemoryFromReport(api, chatId);
   } catch (err) {
-    console.error('Memory auto-update error:', err);
+    logError('memory.auto_update_failed', err, { chatId });
   }
 }
 
@@ -404,6 +501,7 @@ export async function generateMorningBrief(api: Api, chatId: number): Promise<vo
   const yesterday = shiftLocalDate(today, -1);
 
   if (queries.hasReportForPeriod('morning_brief', yesterday, today)) {
+    logInfo('report.morning.skip_duplicate', { today, yesterday, chatId });
     return;
   }
 
@@ -437,7 +535,14 @@ async function updateMemoryFromReport(api: Api, chatId: number): Promise<void> {
   const start = new Date(end);
   start.setDate(start.getDate() - 6);
   const reports = queries.getReportsByDateRange('weekly', formatDateLocal(start), formatDateLocal(end));
-  if (reports.length === 0) return;
+  if (reports.length === 0) {
+    logInfo('memory.auto_update.skip_no_weekly_report', {
+      chatId,
+      startDate: formatDateLocal(start),
+      endDate: formatDateLocal(end),
+    });
+    return;
+  }
 
   const latestReport = reports[reports.length - 1];
   const currentMemory = queries.getMemory();
@@ -448,6 +553,7 @@ async function updateMemoryFromReport(api: Api, chatId: number): Promise<void> {
     : `Current memory:\n${currentMemory || '(empty)'}\n\n--- Weekly report (${latestReport.period_start} — ${latestReport.period_end}) ---\n${latestReport.report_text}`;
 
   const llm = createLLMProvider();
+  const startTs = Date.now();
   const result = await llm.analyze(userPrompt, systemPrompt);
   const newMemory = result.text.trim().slice(0, MEMORY_MAX_LENGTH);
 
@@ -459,6 +565,14 @@ async function updateMemoryFromReport(api: Api, chatId: number): Promise<void> {
       : `🧠 Memory updated${costInfo}`;
     const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `${headerText}\n\n#bot`);
     await sendRawHtmlMessages(api, target.chatId, newMemory, target.replyToMessageId);
+    logInfo('memory.auto_update.complete', {
+      chatId,
+      elapsedMs: Date.now() - startTs,
+      memoryChars: newMemory.length,
+      inputTokens: result.usage?.inputTokens,
+      outputTokens: result.usage?.outputTokens,
+      costUsd: result.usage?.costUsd?.toFixed(5),
+    });
   }
 }
 
@@ -479,6 +593,7 @@ export async function generateMemory(api: Api, chatId: number): Promise<void> {
   const summaries = buildDaySummaries(startStr, endStr);
 
   if (weeklyReports.length === 0 && summaries.length === 0) {
+    logWarn('memory.generate.empty', { chatId, startDate: startStr, endDate: endStr });
     const msg = config.language === 'ru'
       ? 'Нет данных для генерации памяти.\n\n#bot'
       : 'No data to generate memory.\n\n#bot';
@@ -507,6 +622,7 @@ export async function generateMemory(api: Api, chatId: number): Promise<void> {
     : `Current memory:\n${currentMemory || '(empty)'}\n\n${context}`;
 
   const llm = createLLMProvider();
+  const startTs = Date.now();
   const result = await llm.analyze(userPrompt, systemPrompt);
   const newMemory = result.text.trim().slice(0, MEMORY_MAX_LENGTH);
 
@@ -518,5 +634,14 @@ export async function generateMemory(api: Api, chatId: number): Promise<void> {
       : `🧠 Memory generated${costInfo}`;
     const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `${headerText}\n\n#bot`);
     await sendRawHtmlMessages(api, target.chatId, newMemory, target.replyToMessageId);
+    logInfo('memory.generate.complete', {
+      chatId,
+      elapsedMs: Date.now() - startTs,
+      memoryChars: newMemory.length,
+      contextChars: context.length,
+      inputTokens: result.usage?.inputTokens,
+      outputTokens: result.usage?.outputTokens,
+      costUsd: result.usage?.costUsd?.toFixed(5),
+    });
   }
 }

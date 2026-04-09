@@ -4,6 +4,7 @@ import { t } from '../i18n/index.js';
 import { createTTSProvider, type TTSProvider, type TTSResult } from '../providers/tts/index.js';
 import { OpenAITTS } from '../providers/tts/openai.js';
 import { splitMessage } from '../utils/telegram.js';
+import { logInfo, logWarn } from '../utils/logger.js';
 
 interface AudioReplyMeta {
   primaryProviderLabel: string;
@@ -92,6 +93,7 @@ export async function sendAudioReply(
   text: string,
   replyToMessageId?: number,
 ): Promise<number[]> {
+  const start = Date.now();
   const trimmed = text.trim();
   if (!trimmed) return [];
 
@@ -106,7 +108,13 @@ export async function sendAudioReply(
     if (!fallbackTTS) throw err;
 
     const reason = err instanceof Error ? err.message : String(err);
-    console.warn(`TTS primary unavailable (${reason}), using OpenAI`);
+    logWarn('tts.provider_unavailable', {
+      chatId,
+      replyToMessageId,
+      primaryProvider: config.tts.provider,
+      fallbackProvider: 'openai',
+      reason,
+    });
 
     primaryTTS = fallbackTTS;
     fallbackUsed = true;
@@ -117,6 +125,14 @@ export async function sendAudioReply(
     fallbackTTS?.maxInputLength ?? primaryTTS.maxInputLength,
   );
   const chunks = splitMessage(trimmed, maxInputLength);
+  logInfo('tts.reply.start', {
+    chatId,
+    replyToMessageId,
+    primaryProvider: config.tts.provider,
+    chunkCount: chunks.length,
+    textChars: trimmed.length,
+    maxInputLength,
+  });
 
   const primaryProviderLabel = configuredPrimaryProviderLabel();
   let results: TTSResult[];
@@ -127,7 +143,13 @@ export async function sendAudioReply(
     if (!fallbackTTS || primaryTTS === fallbackTTS) throw err;
 
     const reason = err instanceof Error ? err.message : String(err);
-    console.warn(`TTS fallback: ${primaryProviderLabel} failed (${reason}), using OpenAI`);
+    logWarn('tts.reply.fallback', {
+      chatId,
+      replyToMessageId,
+      primaryProvider: primaryProviderLabel,
+      fallbackProvider: 'openai',
+      reason,
+    });
 
     primaryTTS = fallbackTTS;
     fallbackUsed = true;
@@ -149,6 +171,20 @@ export async function sendAudioReply(
     );
     messageIds.push(msg.message_id);
   }
+
+  logInfo('tts.reply.complete', {
+    chatId,
+    replyToMessageId,
+    provider: meta.providerLabel,
+    fallbackUsed: meta.fallbackUsed,
+    chunkCount: results.length,
+    totalChars: meta.totalChars,
+    totalCredits: meta.totalCredits,
+    totalCostUsd: meta.totalCostUsd?.toFixed(5),
+    elapsedMs: Date.now() - start,
+    firstMessageId: messageIds[0],
+    lastMessageId: messageIds[messageIds.length - 1],
+  });
 
   return messageIds;
 }

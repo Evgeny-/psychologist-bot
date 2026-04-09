@@ -1,3 +1,5 @@
+import { logWarn } from './logger.js';
+
 /** Retry a function on transient errors (5xx, network, timeout). */
 export async function withRetry<T>(
   fn: () => Promise<T>,
@@ -10,7 +12,12 @@ export async function withRetry<T>(
     } catch (err) {
       lastError = err;
       if (attempt < retries && isTransient(err)) {
-        console.warn(`Transient error (attempt ${attempt + 1}/${retries + 1}), retrying in ${delayMs}ms...`, err instanceof Error ? err.message : err);
+        logWarn('retry.transient', {
+          attempt: attempt + 1,
+          maxAttempts: retries + 1,
+          delayMs,
+          error: err,
+        });
         await sleep(delayMs * (attempt + 1));
         continue;
       }

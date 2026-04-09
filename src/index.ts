@@ -3,6 +3,7 @@ import { config } from './config.js';
 import { createBot } from './bot.js';
 import { startScheduler } from './services/scheduler.js';
 import { sendSplitMessages } from './utils/telegram.js';
+import { getLogFilePath, logError, logInfo } from './utils/logger.js';
 
 function getAsrModel(): string {
   return config.asr.provider === 'elevenlabs' ? config.asr.elevenlabsModel : config.asr.openaiModel;
@@ -72,16 +73,23 @@ function getServerInfo(): string {
 }
 
 async function main() {
-  console.log('CBT Bot starting...');
-  console.log(`  Language: ${config.language}`);
-  console.log(`  ASR: ${config.asr.provider} (${getAsrModel()})`);
-  console.log(`  LLM: ${config.llm.provider} (${getLlmModel()})`);
-  console.log(`  TTS: ${config.tts.provider} (${getTtsModel()})`);
+  logInfo('app.start', {
+    language: config.language,
+    asrProvider: config.asr.provider,
+    asrModel: getAsrModel(),
+    llmProvider: config.llm.provider,
+    llmModel: getLlmModel(),
+    ttsProvider: config.tts.provider,
+    ttsModel: getTtsModel(),
+    compareMode: config.compareMode,
+    timezone: config.timezone,
+    logFilePath: getLogFilePath(),
+  });
 
   const bot = createBot();
 
   const me = await bot.api.getMe();
-  console.log(`  Bot: @${me.username} (${me.id})`);
+  logInfo('app.bot_identity', { botId: me.id, username: me.username });
 
   // Check API keys in parallel
   const [elevenLabs, openai, anthropic] = await Promise.all([
@@ -97,7 +105,7 @@ async function main() {
 
   bot.start({
     onStart: async () => {
-      console.log('Bot is running! Send a voice message to the channel.');
+      logInfo('app.ready', { chatId });
 
       if (chatId) {
         const lines = [
@@ -125,16 +133,16 @@ async function main() {
     },
   });
 
-  const shutdown = () => {
-    console.log('Shutting down...');
+  const shutdown = (signal: string) => {
+    logInfo('app.shutdown', { signal });
     bot.stop();
     process.exit(0);
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 main().catch((err) => {
-  console.error('Fatal error:', err);
+  logError('app.fatal', err);
   process.exit(1);
 });

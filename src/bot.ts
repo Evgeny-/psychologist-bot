@@ -11,6 +11,7 @@ import { todayLocal, nowLocalTime, formatDateLocal } from './utils/date.js';
 import { sendSplitMessages, sendRawHtmlMessages, notifyChannelPostForwarded, postChannelHeader } from './utils/telegram.js';
 import { ApiBalanceError } from './providers/asr/elevenlabs.js';
 import { ApiBalanceError as LLMBalanceError } from './providers/llm/claude.js';
+import { logError, logInfo, logWarn } from './utils/logger.js';
 
 
 export function createBot(): Bot {
@@ -22,43 +23,43 @@ export function createBot(): Bot {
     const chatId = ctx.chat.id;
 
     if (text === '/weekly' || text.startsWith('/weekly@')) {
-      console.log('Channel command: /weekly');
-      generateTestWeeklyReport(ctx.api, chatId).catch(err => console.error('Weekly report error:', err));
+      logInfo('bot.channel_command', { command: '/weekly', chatId, messageId: ctx.channelPost.message_id });
+      generateTestWeeklyReport(ctx.api, chatId).catch(err => logError('bot.command.weekly_failed', err, { chatId }));
       return;
     }
 
     if (text === '/monthly' || text.startsWith('/monthly@')) {
-      console.log('Channel command: /monthly');
-      generateTestMonthlyReport(ctx.api, chatId).catch(err => console.error('Monthly report error:', err));
+      logInfo('bot.channel_command', { command: '/monthly', chatId, messageId: ctx.channelPost.message_id });
+      generateTestMonthlyReport(ctx.api, chatId).catch(err => logError('bot.command.monthly_failed', err, { chatId }));
       return;
     }
 
     if (text === '/morning' || text.startsWith('/morning@')) {
-      console.log('Channel command: /morning');
-      generateTestMorningBrief(ctx.api, chatId).catch(err => console.error('Morning brief error:', err));
+      logInfo('bot.channel_command', { command: '/morning', chatId, messageId: ctx.channelPost.message_id });
+      generateTestMorningBrief(ctx.api, chatId).catch(err => logError('bot.command.morning_failed', err, { chatId }));
       return;
     }
 
     if (text === '/stats' || text.startsWith('/stats@')) {
-      console.log('Channel command: /stats');
-      handleStatsCommand(ctx.api, chatId).catch(err => console.error('Stats error:', err));
+      logInfo('bot.channel_command', { command: '/stats', chatId, messageId: ctx.channelPost.message_id });
+      handleStatsCommand(ctx.api, chatId).catch(err => logError('bot.command.stats_failed', err, { chatId }));
       return;
     }
 
     if (text === '/export' || text.startsWith('/export@')) {
-      console.log('Channel command: /export');
-      handleExportCommand(ctx.api, chatId).catch(err => console.error('Export error:', err));
+      logInfo('bot.channel_command', { command: '/export', chatId, messageId: ctx.channelPost.message_id });
+      handleExportCommand(ctx.api, chatId).catch(err => logError('bot.command.export_failed', err, { chatId }));
       return;
     }
 
     if (text === '/memory' || text.startsWith('/memory@')) {
-      console.log('Channel command: /memory');
-      handleMemoryCommand(ctx.api, chatId).catch(err => console.error('Memory error:', err));
+      logInfo('bot.channel_command', { command: '/memory', chatId, messageId: ctx.channelPost.message_id });
+      handleMemoryCommand(ctx.api, chatId).catch(err => logError('bot.command.memory_failed', err, { chatId }));
       return;
     }
 
     if (text.startsWith('/setmemory ') || text.startsWith('/setmemory@')) {
-      console.log('Channel command: /setmemory');
+      logInfo('bot.channel_command', { command: '/setmemory', chatId, messageId: ctx.channelPost.message_id });
       const content = text.replace(/^\/setmemory(@\S+)?\s+/, '').trim();
       if (!content) {
         ctx.api.sendMessage(chatId, config.language === 'ru'
@@ -73,17 +74,24 @@ export function createBot(): Bot {
     }
 
     if (text === '/generatememory' || text.startsWith('/generatememory@')) {
-      console.log('Channel command: /generatememory');
-      generateMemory(ctx.api, chatId).catch(err => console.error('Generate memory error:', err));
+      logInfo('bot.channel_command', { command: '/generatememory', chatId, messageId: ctx.channelPost.message_id });
+      generateMemory(ctx.api, chatId).catch(err => logError('bot.command.generate_memory_failed', err, { chatId }));
       return;
     }
 
-    console.log(`Channel post in chat ${chatId}, message ${ctx.channelPost.message_id}`);
+    logInfo('bot.channel_post', {
+      chatId,
+      messageId: ctx.channelPost.message_id,
+      textChars: text?.length ?? 0,
+    });
   });
 
   // Log non-text channel posts
   bot.on('channel_post', async (ctx) => {
-    console.log(`Channel post in chat ${ctx.chat.id}, message ${ctx.channelPost.message_id}`);
+    logInfo('bot.channel_post_non_text', {
+      chatId: ctx.chat.id,
+      messageId: ctx.channelPost.message_id,
+    });
   });
 
   // Discussion group messages — diary entries + thread conversations
@@ -106,6 +114,15 @@ export function createBot(): Bot {
 async function handleMessage(ctx: Context): Promise<void> {
   const msg = ctx.message;
   if (!msg) return;
+  logInfo('bot.message.received', {
+    chatId: ctx.chat?.id,
+    messageId: msg.message_id,
+    threadId: msg.message_thread_id,
+    isForwarded: !!msg.forward_origin,
+    hasVoice: !!msg.voice,
+    hasAudio: !!msg.audio,
+    textChars: (msg.text || msg.caption || '').length,
+  });
 
   // Register forwarded channel posts for the channel-to-comments pattern
   if (msg.forward_origin && 'message_id' in msg.forward_origin) {
@@ -118,7 +135,13 @@ async function handleMessage(ctx: Context): Promise<void> {
   // Skip forwarded bot-generated posts (tagged with #bot) and commands
   if (msg.forward_origin) {
     const text = msg.text || msg.caption || '';
-    if (text.startsWith('/') || text.includes('#bot')) return;
+    if (text.startsWith('/') || text.includes('#bot')) {
+      logInfo('bot.message.ignored_forwarded_bot_or_command', {
+        chatId: ctx.chat?.id,
+        messageId: msg.message_id,
+      });
+      return;
+    }
   }
 
   const isForwarded = !!msg.forward_origin;
@@ -139,6 +162,14 @@ async function handleThreadMessage(ctx: Context, threadId: number): Promise<void
   const voice = msg.voice;
   const audio = msg.audio;
   let text = msg.text || msg.caption || '';
+  logInfo('bot.thread_message.start', {
+    chatId: ctx.chat?.id,
+    messageId: msg.message_id,
+    threadId,
+    hasVoice: !!voice,
+    hasAudio: !!audio,
+    textChars: text.length,
+  });
 
   if (voice || audio) {
     const fileId = (voice || audio)!.file_id;
@@ -158,11 +189,30 @@ async function handleThreadMessage(ctx: Context, threadId: number): Promise<void
 
     text = transcript;
     await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
+    logInfo('bot.thread_message.transcribed', {
+      chatId: ctx.chat?.id,
+      messageId: msg.message_id,
+      threadId,
+      transcriptChars: text.length,
+    });
   }
 
-  if (!text.trim()) return;
+  if (!text.trim()) {
+    logWarn('bot.thread_message.empty', {
+      chatId: ctx.chat?.id,
+      messageId: msg.message_id,
+      threadId,
+    });
+    return;
+  }
 
   await handleThreadReply(ctx.api, ctx.chat!.id, threadId, text, msg.message_id);
+  logInfo('bot.thread_message.complete', {
+    chatId: ctx.chat?.id,
+    messageId: msg.message_id,
+    threadId,
+    textChars: text.length,
+  });
 }
 
 async function handleNewEntry(ctx: Context): Promise<void> {
@@ -189,6 +239,16 @@ async function handleNewEntry(ctx: Context): Promise<void> {
   } else {
     return;
   }
+  logInfo('bot.new_entry.start', {
+    chatId: ctx.chat?.id,
+    messageId: msg.message_id,
+    isForwarded,
+    entryType,
+    hasVoice: !!voice,
+    hasAudio: !!audio,
+    textChars: text?.length ?? 0,
+    durationSeconds: duration,
+  });
 
   const today = todayLocal();
   const forwardOrigin = msg.forward_origin;
@@ -203,8 +263,16 @@ async function handleNewEntry(ctx: Context): Promise<void> {
     duration_seconds: duration,
     local_time: nowLocalTime(),
   });
-
   const replyToId = msg.message_thread_id ?? msg.message_id;
+  logInfo('bot.new_entry.saved', {
+    entryId,
+    chatId: ctx.chat?.id,
+    messageId: msg.message_id,
+    replyToId,
+    channelPostId,
+    entryType,
+    date: today,
+  });
 
   let contentForAnalysis: string;
 
@@ -225,11 +293,24 @@ async function handleNewEntry(ctx: Context): Promise<void> {
     contentForAnalysis = transcript;
 
     await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
+    logInfo('bot.new_entry.transcribed', {
+      entryId,
+      chatId: ctx.chat?.id,
+      messageId: msg.message_id,
+      transcriptChars: transcript.length,
+    });
   } else {
     contentForAnalysis = text!;
   }
 
   const metrics = await analyzeEntry(ctx.api, ctx.chat!.id, entryId, contentForAnalysis, replyToId, replyToId, today);
+  logInfo('bot.new_entry.analysis_complete', {
+    entryId,
+    chatId: ctx.chat?.id,
+    messageId: msg.message_id,
+    analysisInputChars: contentForAnalysis.length,
+    metricsExtracted: Object.keys(metrics).length,
+  });
 
   const hasMetrics = metrics.mood !== undefined || metrics.anxiety !== undefined || metrics.self_esteem !== undefined || metrics.productivity !== undefined;
   if (hasMetrics) {
@@ -241,8 +322,17 @@ async function handleNewEntry(ctx: Context): Promise<void> {
       self_esteem: metrics.self_esteem,
       productivity: metrics.productivity,
     });
+    logInfo('bot.new_entry.metrics_saved', {
+      entryId,
+      date: today,
+      mood: metrics.mood,
+      anxiety: metrics.anxiety,
+      selfEsteem: metrics.self_esteem,
+      productivity: metrics.productivity,
+    });
   } else if (!queries.hasMetricsForDate(today)) {
     await ctx.reply(t().metricsAsk, { reply_to_message_id: replyToId });
+    logInfo('bot.new_entry.metrics_prompted', { entryId, date: today, replyToId });
   }
 }
 
@@ -332,7 +422,11 @@ async function handleExportCommand(api: import('grammy').Api, chatId: number): P
 }
 
 async function handleError(ctx: Context, err: unknown): Promise<void> {
-  console.error('Bot error:', err);
+  logError('bot.error', err, {
+    chatId: ctx.chat?.id,
+    messageId: ctx.message?.message_id,
+    threadId: ctx.message?.message_thread_id,
+  });
 
   const strings = t();
 

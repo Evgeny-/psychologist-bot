@@ -1,4 +1,5 @@
 import type { Api } from 'grammy';
+import { logInfo, logWarn } from './logger.js';
 
 const MAX_MESSAGE_LENGTH = 4096;
 
@@ -98,6 +99,15 @@ export async function sendSplitMessages(
     messageIds.push(msg.message_id);
   }
 
+  logInfo('telegram.send_split.complete', {
+    chatId,
+    replyToMessageId,
+    chunks: chunks.length,
+    firstMessageId: messageIds[0],
+    lastMessageId: messageIds[messageIds.length - 1],
+    textChars: text.length,
+  });
+
   return messageIds;
 }
 
@@ -118,6 +128,15 @@ export async function sendRawHtmlMessages(
     });
     messageIds.push(msg.message_id);
   }
+
+  logInfo('telegram.send_html.complete', {
+    chatId,
+    replyToMessageId,
+    chunks: chunks.length,
+    firstMessageId: messageIds[0],
+    lastMessageId: messageIds[messageIds.length - 1],
+    textChars: html.length,
+  });
 
   return messageIds;
 }
@@ -154,6 +173,12 @@ export async function postChannelHeader(
   headerHtml: string,
 ): Promise<CommentTarget> {
   const channelMsg = await api.sendMessage(channelId, headerHtml, { parse_mode: 'HTML' });
+  logInfo('telegram.channel_header.sent', {
+    channelId,
+    groupId,
+    channelMessageId: channelMsg.message_id,
+    headerChars: headerHtml.length,
+  });
 
   if (!groupId) {
     return { chatId: channelId };
@@ -167,13 +192,25 @@ export async function postChannelHeader(
         reject(new Error('Timeout'));
       }, 10000);
     });
+    logInfo('telegram.channel_header.forwarded', {
+      channelId,
+      groupId,
+      channelMessageId: channelMsg.message_id,
+      groupMessageId: groupMsgId,
+    });
     return { chatId: groupId, replyToMessageId: groupMsgId };
   } catch {
+    logWarn('telegram.channel_header.forward_timeout', {
+      channelId,
+      groupId,
+      channelMessageId: channelMsg.message_id,
+    });
     return { chatId: channelId };
   }
 }
 
 export async function downloadFileBuffer(api: Api, fileId: string): Promise<Buffer> {
+  const start = Date.now();
   const file = await api.getFile(fileId);
   if (!file.file_path) throw new Error('No file_path in getFile response');
 
@@ -182,5 +219,11 @@ export async function downloadFileBuffer(api: Api, fileId: string): Promise<Buff
   if (!response.ok) throw new Error(`Failed to download file: ${response.status}`);
 
   const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+  const buffer = Buffer.from(arrayBuffer);
+  logInfo('telegram.file_download.complete', {
+    fileId,
+    bytes: buffer.length,
+    elapsedMs: Date.now() - start,
+  });
+  return buffer;
 }

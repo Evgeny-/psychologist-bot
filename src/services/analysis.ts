@@ -7,6 +7,7 @@ import { t } from '../i18n/index.js';
 import { sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
 import { queries } from '../db/index.js';
 import { sendAudioReply } from './audio-replies.js';
+import { logError, logInfo, logWarn } from '../utils/logger.js';
 
 interface AnalysisResult {
   sentiment?: string;
@@ -40,6 +41,7 @@ interface ParsedAnalysisResponse {
   freeform: string;
   metrics: ExtractedMetrics;
   wantsAudioReply: boolean;
+  parsedJson: boolean;
 }
 
 function parseAnalysisJson(text: string): AnalysisResult | null {
@@ -81,6 +83,7 @@ function parseAnalysisResponse(responseText: string): ParsedAnalysisResponse {
     freeform,
     metrics,
     wantsAudioReply: parsed?.reply_audio_requested === true,
+    parsedJson: parsed !== null,
   };
 }
 
@@ -198,14 +201,36 @@ export async function analyzeEntry(
     role: 'user',
     content: text,
   });
+  logInfo('llm.analysis.start', {
+    chatId,
+    entryId,
+    threadId,
+    replyToMessageId,
+    entryDate,
+    inputChars: text.length,
+    promptChars: userPrompt.length,
+    systemChars: systemPrompt.length,
+    compareMode: config.compareMode,
+  });
 
   if (config.compareMode) {
     return analyzeCompare(api, chatId, entryId, userPrompt, systemPrompt, threadId, replyToMessageId);
   }
 
   const llm = createLLMProvider();
+  const start = Date.now();
   const result = await llm.analyze(userPrompt, systemPrompt);
   const parsedResponse = parseAnalysisResponse(result.text);
+  if (!parsedResponse.parsedJson) {
+    logWarn('llm.analysis.parse_fallback', {
+      chatId,
+      entryId,
+      threadId,
+      provider: llm.providerName,
+      model: llm.modelName,
+      outputChars: result.text.length,
+    });
+  }
 
   const metrics = saveAnalysis(entryId, parsedResponse, llm);
 
@@ -224,10 +249,26 @@ export async function analyzeEntry(
   const body = markdownToHtml(freeform);
   const metricsLine = formatMetricsLine(metrics);
   await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}${metricsLine}`, replyToMessageId);
+  logInfo('llm.analysis.complete', {
+    chatId,
+    entryId,
+    threadId,
+    replyToMessageId,
+    provider: llm.providerName,
+    model: llm.modelName,
+    elapsedMs: Date.now() - start,
+    outputChars: freeform.length,
+    parsedJson: parsedResponse.parsedJson,
+    wantsAudioReply: parsedResponse.wantsAudioReply,
+    metricsExtracted: Object.keys(metrics).length,
+    inputTokens: result.usage?.inputTokens,
+    outputTokens: result.usage?.outputTokens,
+    costUsd: result.usage?.costUsd?.toFixed(5),
+  });
 
   if (parsedResponse.wantsAudioReply) {
     await sendAudioReply(api, chatId, freeform, replyToMessageId).catch(async (err) => {
-      console.error('Audio reply error:', err);
+      logError('tts.reply.failed', err, { chatId, entryId, threadId, replyToMessageId });
       await sendRawHtmlMessages(api, chatId, t().audioReplyUnavailable, replyToMessageId).catch(() => {});
     });
   }
@@ -266,6 +307,16 @@ async function analyzeCompare(
     if (settled.status === 'fulfilled') {
       const { result, llm, elapsed } = settled.value;
       const parsedResponse = parseAnalysisResponse(result.text);
+      if (!parsedResponse.parsedJson) {
+        logWarn('llm.analysis.compare_parse_fallback', {
+          chatId,
+          entryId,
+          threadId,
+          provider: llm.providerName,
+          model: llm.modelName,
+          outputChars: result.text.length,
+        });
+      }
       const metrics = saveAnalysis(entryId, parsedResponse, llm);
 
       if (!threadSaved) {
@@ -289,16 +340,40 @@ async function analyzeCompare(
       const body = markdownToHtml(freeform);
       const metricsLine = formatMetricsLine(metrics);
       await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}${metricsLine}`, replyToMessageId);
+      logInfo('llm.analysis.compare_complete', {
+        chatId,
+        entryId,
+        threadId,
+        replyToMessageId,
+        provider: llm.providerName,
+        model: llm.modelName,
+        elapsedSec: elapsed,
+        outputChars: freeform.length,
+        parsedJson: parsedResponse.parsedJson,
+        wantsAudioReply: parsedResponse.wantsAudioReply,
+        metricsExtracted: Object.keys(metrics).length,
+        inputTokens: result.usage?.inputTokens,
+        outputTokens: result.usage?.outputTokens,
+        costUsd: result.usage?.costUsd?.toFixed(5),
+      });
 
       if (parsedResponse.wantsAudioReply && !audioSent) {
         await sendAudioReply(api, chatId, freeform, replyToMessageId).catch(async (err) => {
-          console.error('Audio reply error:', err);
+          logError('tts.reply.failed', err, { chatId, entryId, threadId, replyToMessageId });
           await sendRawHtmlMessages(api, chatId, t().audioReplyUnavailable, replyToMessageId).catch(() => {});
         });
         audioSent = true;
       }
     } else {
       const errMsg = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
+      logError('llm.analysis.compare_failed', settled.reason, {
+        chatId,
+        entryId,
+        threadId,
+        replyToMessageId,
+        provider: provider.providerName,
+        model: provider.modelName,
+      });
       await sendRawHtmlMessages(api, chatId, `<blockquote>${label}</blockquote>\n\nError: ${errMsg}`, replyToMessageId);
     }
   }

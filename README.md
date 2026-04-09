@@ -74,6 +74,8 @@ Key ones:
 
 Scheduled jobs use `BOT_TIMEZONE`, including the daily morning brief at 08:00.
 
+Runtime logs are written both to stdout/journald and to `logs/app.log` in logfmt-style single-line entries, so stage timings can be grepped without digging through raw stack traces.
+
 For voice replies:
 - Set `ELEVENLABS_TTS_VOICE_ID` if you want ElevenLabs TTS as the primary voice provider
 - Or rely on OpenAI TTS fallback with `OPENAI_TTS_MODEL` and `OPENAI_TTS_VOICE`

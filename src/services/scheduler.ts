@@ -5,6 +5,7 @@ import { queries } from '../db/index.js';
 import { t } from '../i18n/index.js';
 import { todayLocal } from '../utils/date.js';
 import { generateWeeklyReport, generateMonthlyReport, generateMorningBrief } from './reports.js';
+import { logError, logInfo } from '../utils/logger.js';
 
 function daysSinceLastEntry(): number {
   const lastDate = queries.getLastEntryDate();
@@ -28,7 +29,10 @@ export function startScheduler(api: Api): void {
     cron.schedule('30 20 * * *', async () => {
       try {
         const today = todayLocal();
-        if (queries.hasEntryForDate(today)) return;
+        if (queries.hasEntryForDate(today)) {
+          logInfo('scheduler.reminder.skip_has_entry', { today, reminderChatId });
+          return;
+        }
 
         const days = daysSinceLastEntry();
         const strings = t();
@@ -46,8 +50,9 @@ export function startScheduler(api: Api): void {
         }
 
         await api.sendMessage(reminderChatId, message);
+        logInfo('scheduler.reminder.sent', { today, reminderChatId, daysSinceLastEntry: days, streak });
       } catch (err) {
-        console.error('Scheduler: reminder error', err);
+        logError('scheduler.reminder.failed', err, { reminderChatId });
       }
     }, cronOptions);
   }
@@ -56,30 +61,41 @@ export function startScheduler(api: Api): void {
     // Morning brief: every day at 08:00 → channel
     cron.schedule('0 8 * * *', async () => {
       try {
+        logInfo('scheduler.morning.tick', { channelId });
         await generateMorningBrief(api, channelId);
       } catch (err) {
-        console.error('Scheduler: morning brief error', err);
+        logError('scheduler.morning.failed', err, { channelId });
       }
     }, cronOptions);
 
     // Weekly report: Monday at 10:00 → channel
     cron.schedule('0 10 * * 1', async () => {
       try {
+        logInfo('scheduler.weekly.tick', { channelId });
         await generateWeeklyReport(api, channelId);
       } catch (err) {
-        console.error('Scheduler: weekly report error', err);
+        logError('scheduler.weekly.failed', err, { channelId });
       }
     }, cronOptions);
 
     // Monthly report: 1st of month at 10:00 → channel
     cron.schedule('0 10 1 * *', async () => {
       try {
+        logInfo('scheduler.monthly.tick', { channelId });
         await generateMonthlyReport(api, channelId);
       } catch (err) {
-        console.error('Scheduler: monthly report error', err);
+        logError('scheduler.monthly.failed', err, { channelId });
       }
     }, cronOptions);
   }
 
-  console.log(`Scheduler started (${config.timezone}): morning 08:00, reminders 20:30, weekly Mon 10:00, monthly 1st 10:00`);
+  logInfo('scheduler.started', {
+    timezone: config.timezone,
+    reminderChatId,
+    channelId,
+    morningAt: '08:00',
+    reminderAt: '20:30',
+    weeklyAt: 'Mon 10:00',
+    monthlyAt: '1st 10:00',
+  });
 }

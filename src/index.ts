@@ -3,7 +3,8 @@ import { config } from './config.js';
 import { createBot } from './bot.js';
 import { startScheduler } from './services/scheduler.js';
 import { sendSplitMessages } from './utils/telegram.js';
-import { getLogFilePath, logError, logInfo } from './utils/logger.js';
+import { getLogFilePath, logError, logInfo, logWarn } from './utils/logger.js';
+import { withRetry } from './utils/retry.js';
 
 function getAsrModel(): string {
   return config.asr.provider === 'elevenlabs' ? config.asr.elevenlabsModel : config.asr.openaiModel;
@@ -88,8 +89,12 @@ async function main() {
 
   const bot = createBot();
 
-  const me = await bot.api.getMe();
-  logInfo('app.bot_identity', { botId: me.id, username: me.username });
+  try {
+    const me = await withRetry(() => bot.api.getMe(), { retries: 2, delayMs: 1500 });
+    logInfo('app.bot_identity', { botId: me.id, username: me.username });
+  } catch (err) {
+    logWarn('app.bot_identity_unavailable', { error: err });
+  }
 
   // Check API keys in parallel
   const [elevenLabs, openai, anthropic] = await Promise.all([

@@ -6,6 +6,7 @@ import { withRetry } from '../../utils/retry.js';
 // Pricing per million tokens
 const OPENAI_PRICING: Record<string, { input: number; output: number }> = {
   'gpt-5.4': { input: 3.0, output: 15.0 },
+  'gpt-5.4-mini': { input: 0.75, output: 4.5 },
   'gpt-5.4-pro': { input: 15.0, output: 75.0 },
   'gpt-5.2': { input: 2.5, output: 10.0 },
   'gpt-5.2-pro': { input: 15.0, output: 75.0 },

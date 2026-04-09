@@ -28,7 +28,7 @@ export const config = {
 
   llm: {
     provider: (process.env.LLM_PROVIDER || 'claude') as LLMProviderType,
-    openaiModel: process.env.OPENAI_LLM_MODEL || 'gpt-5.4',
+    openaiModel: process.env.OPENAI_LLM_MODEL || 'gpt-5.4-mini',
     claudeModel: process.env.CLAUDE_LLM_MODEL || 'claude-sonnet-4-6',
   },
 

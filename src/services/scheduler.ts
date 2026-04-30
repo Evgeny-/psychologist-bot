@@ -19,12 +19,12 @@ function daysSinceLastEntry(): number {
 export function startScheduler(api: Api): void {
   const channelId = config.telegram.channelId;
   const groupId = config.telegram.discussionGroupId;
-  const reminderChatId = groupId || channelId;
+  const reminderChatId = channelId || groupId;
   const cronOptions = { timezone: config.timezone };
 
   if (!reminderChatId && !channelId) return;
 
-  // Daily reminder at 20:30 → group
+  // Daily reminder at 20:30 → channel, with discussion group as a fallback.
   if (reminderChatId) {
     cron.schedule('30 20 * * *', async () => {
       try {
@@ -49,7 +49,7 @@ export function startScheduler(api: Api): void {
           message += `\n\n${strings.streakInfo.replace('{streak}', String(streak))}`;
         }
 
-        await api.sendMessage(reminderChatId, message);
+        await api.sendMessage(reminderChatId, `${message}\n\n#bot`);
         logInfo('scheduler.reminder.sent', { today, reminderChatId, daysSinceLastEntry: days, streak });
       } catch (err) {
         logError('scheduler.reminder.failed', err, { reminderChatId });

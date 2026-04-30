@@ -7,6 +7,7 @@ import { t } from '../i18n/index.js';
 import { sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
 import { queries } from '../db/index.js';
 import { sendAudioReply } from './audio-replies.js';
+import { buildSystemPromptWithUserMemory, sanitizeDailyMemorySummary } from './memory-context.js';
 import { logError, logInfo, logWarn } from '../utils/logger.js';
 
 interface AnalysisResult {
@@ -25,6 +26,7 @@ interface AnalysisResult {
     self_esteem?: number | null;
     productivity?: number | null;
   };
+  daily_memory_summary?: string;
   analysis_text?: string;
   reply_audio_requested?: boolean;
 }
@@ -108,6 +110,21 @@ function saveAnalysis(entryId: number, response: ParsedAnalysisResponse, llm: LL
   return metrics;
 }
 
+function saveDailyMemorySummary(date: string, entryId: number, parsed: AnalysisResult | null, llm: LLMProvider): boolean {
+  if (typeof parsed?.daily_memory_summary !== 'string') return false;
+  const summary = sanitizeDailyMemorySummary(parsed.daily_memory_summary);
+  if (!summary) return false;
+
+  queries.upsertDailyMemory({
+    date,
+    summary,
+    source_entry_id: entryId,
+    llm_provider: llm.providerName,
+    llm_model: llm.modelName,
+  });
+  return true;
+}
+
 function formatUsage(usage?: LLMUsage): string {
   if (!usage) return '';
   return ` | ${usage.inputTokens}in/${usage.outputTokens}out | $${usage.costUsd.toFixed(5)}`;
@@ -173,15 +190,6 @@ function buildUserPromptWithContext(text: string, date: string, entryId: number)
   return sections.join('\n\n') + '\n\n' + text;
 }
 
-function buildSystemPromptWithMemory(basePrompt: string): string {
-  const memory = queries.getMemory();
-  if (!memory) return basePrompt;
-  const label = config.language === 'ru'
-    ? '--- ПАМЯТЬ О ПОЛЬЗОВАТЕЛЕ (используй как контекст, не упоминай явно) ---'
-    : '--- USER MEMORY (use as context, do not mention explicitly) ---';
-  return `${basePrompt}\n\n${label}\n${memory}\n---`;
-}
-
 export async function analyzeEntry(
   api: Api,
   chatId: number,
@@ -191,8 +199,12 @@ export async function analyzeEntry(
   replyToMessageId?: number,
   date?: string,
 ): Promise<ExtractedMetrics> {
-  const systemPrompt = buildSystemPromptWithMemory(getDailySystemPrompt(config.language));
   const entryDate = date || todayLocal();
+  const systemPrompt = buildSystemPromptWithUserMemory(
+    getDailySystemPrompt(config.language),
+    entryDate,
+    { includeReferenceDate: false },
+  );
   const userPrompt = buildUserPromptWithContext(text, entryDate, entryId);
 
   // Save user's diary entry as first thread message
@@ -214,7 +226,7 @@ export async function analyzeEntry(
   });
 
   if (config.compareMode) {
-    return analyzeCompare(api, chatId, entryId, userPrompt, systemPrompt, threadId, replyToMessageId);
+    return analyzeCompare(api, chatId, entryId, entryDate, userPrompt, systemPrompt, threadId, replyToMessageId);
   }
 
   const llm = createLLMProvider();
@@ -233,6 +245,7 @@ export async function analyzeEntry(
   }
 
   const metrics = saveAnalysis(entryId, parsedResponse, llm);
+  const dailyMemorySaved = saveDailyMemorySummary(entryDate, entryId, parsedResponse.parsed, llm);
 
   // Save analysis as assistant message in thread
   const freeform = parsedResponse.freeform;
@@ -261,6 +274,7 @@ export async function analyzeEntry(
     parsedJson: parsedResponse.parsedJson,
     wantsAudioReply: parsedResponse.wantsAudioReply,
     metricsExtracted: Object.keys(metrics).length,
+    dailyMemorySaved,
     inputTokens: result.usage?.inputTokens,
     outputTokens: result.usage?.outputTokens,
     costUsd: result.usage?.costUsd?.toFixed(5),
@@ -279,6 +293,7 @@ async function analyzeCompare(
   api: Api,
   chatId: number,
   entryId: number,
+  entryDate: string,
   text: string,
   systemPrompt: string,
   threadId: number,
@@ -327,6 +342,7 @@ async function analyzeCompare(
 
       // Save first successful provider's response as thread context for follow-up chat
       if (!threadSaved) {
+        const dailyMemorySaved = saveDailyMemorySummary(entryDate, entryId, parsedResponse.parsed, llm);
         queries.insertThreadMessage({
           thread_id: threadId,
           role: 'assistant',
@@ -335,6 +351,13 @@ async function analyzeCompare(
           llm_model: llm.modelName,
         });
         threadSaved = true;
+        logInfo('daily_memory.compare_saved', {
+          entryId,
+          threadId,
+          provider: llm.providerName,
+          model: llm.modelName,
+          saved: dailyMemorySaved,
+        });
       }
       const meta = `<blockquote>${label} | ${elapsed}s${formatUsage(result.usage)}</blockquote>`;
       const body = markdownToHtml(freeform);

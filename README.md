@@ -16,6 +16,7 @@ Multiple entries per day? The bot sees your earlier entries as reference, so it 
 - **Audio replies on demand** — ask the bot to answer by voice/audio and it will synthesize the reply
 - **Same-day context** — later entries include earlier ones as reference, so the model sees the full picture
 - **Morning brief** — every morning the bot posts a short carry-over note to the main channel based on yesterday's diary context
+- **Short-term memory** — compact daily summaries for the last 10 days, used in new analyses and thread replies
 - **Compare mode** — run Claude + OpenAI in parallel, see both analyses side by side
 - **Reports** — weekly and monthly summaries with smart context fitting
 - **Metrics** — mood, anxiety, energy (0-10), extracted from your speech
@@ -35,6 +36,10 @@ Type these in the **channel** (not the discussion group):
 | `/morning` | Generate today's morning brief manually |
 | `/stats` | Show streak, entry count, average metrics |
 | `/export` | Download all entries as CSV |
+| `/memory` | Show long-term memory |
+| `/recentmemory` | Show short-term daily memory |
+| `/generatememory` | Regenerate long-term memory |
+| `/generaterecentmemory` | Regenerate short-term memory for the last 10 days |
 
 ## Setup
 

@@ -124,12 +124,23 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
       updated_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS daily_memory (
+      date TEXT PRIMARY KEY,
+      summary TEXT NOT NULL,
+      source_entry_id INTEGER REFERENCES entries(id),
+      llm_provider TEXT,
+      llm_model TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
     INSERT OR IGNORE INTO memory (id, content) VALUES (1, '');
 
     CREATE INDEX IF NOT EXISTS idx_entries_date ON entries(date);
     CREATE INDEX IF NOT EXISTS idx_metrics_date ON metrics(date);
     CREATE INDEX IF NOT EXISTS idx_reports_period ON reports(type, period_start);
     CREATE INDEX IF NOT EXISTS idx_thread_messages_thread ON thread_messages(thread_id);
+    CREATE INDEX IF NOT EXISTS idx_daily_memory_date ON daily_memory(date);
   `);
 
   return db;

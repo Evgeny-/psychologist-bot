@@ -5,7 +5,9 @@ import { config } from '../config.js';
 import { sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
 import { queries } from '../db/index.js';
 import { sendAudioReply } from './audio-replies.js';
+import { buildSystemPromptWithUserMemory } from './memory-context.js';
 import { t } from '../i18n/index.js';
+import { todayLocal } from '../utils/date.js';
 import { logError, logInfo, logWarn } from '../utils/logger.js';
 
 interface ChatResponseEnvelope {
@@ -17,15 +19,6 @@ interface ParsedChatResponse {
   text: string;
   wantsAudioReply: boolean;
   parsedJson: boolean;
-}
-
-function buildSystemPromptWithMemory(basePrompt: string): string {
-  const memory = queries.getMemory();
-  if (!memory) return basePrompt;
-  const label = config.language === 'ru'
-    ? '--- ПАМЯТЬ О ПОЛЬЗОВАТЕЛЕ (используй как контекст, не упоминай явно) ---'
-    : '--- USER MEMORY (use as context, do not mention explicitly) ---';
-  return `${basePrompt}\n\n${label}\n${memory}\n---`;
 }
 
 function parseChatResponseJson(text: string): ChatResponseEnvelope | null {
@@ -58,7 +51,11 @@ export async function handleThreadReply(
   userMessage: string,
   replyToMessageId?: number,
 ): Promise<void> {
-  const systemPrompt = buildSystemPromptWithMemory(getChatSystemPrompt(config.language));
+  const systemPrompt = buildSystemPromptWithUserMemory(
+    getChatSystemPrompt(config.language),
+    todayLocal(),
+    { includeReferenceDate: true },
+  );
 
   const history = queries.getThreadMessages(threadId);
   const messages: ChatMessage[] = history.map((m) => ({

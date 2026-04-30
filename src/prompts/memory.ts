@@ -1,10 +1,17 @@
 import type { BotLanguage } from '../config.js';
 
 export const MEMORY_MAX_LENGTH = 3000;
+export const RECENT_DAILY_MEMORY_DAYS = 10;
+export const DAILY_MEMORY_SUMMARY_MAX_LENGTH = 500;
 
 export function getMemoryUpdatePrompt(language: BotLanguage): string {
   if (language === 'ru') return MEMORY_UPDATE_PROMPT_RU;
   return MEMORY_UPDATE_PROMPT_EN;
+}
+
+export function getDailyMemorySummaryPrompt(language: BotLanguage): string {
+  if (language === 'ru') return DAILY_MEMORY_SUMMARY_PROMPT_RU;
+  return DAILY_MEMORY_SUMMARY_PROMPT_EN;
 }
 
 const MEMORY_UPDATE_PROMPT_RU = `Ты управляешь долгосрочной памятью для CBT-бота — психологического помощника, который ведёт дневник пользователя.
@@ -38,3 +45,41 @@ Rules:
 8. Maximum length: ${MEMORY_MAX_LENGTH} characters. Be concise.
 
 Response format: return ONLY the updated memory text, without comments, explanations, or wrappers.`;
+
+const DAILY_MEMORY_SUMMARY_PROMPT_RU = `Ты создаёшь краткосрочную дневную память для CBT-бота.
+
+Тебе даны записи пользователя за один день, анализы, возможные follow-up обсуждения и метрики.
+
+Верни ТОЛЬКО JSON-объект:
+{
+  "summary": "краткая сводка дня для будущего контекста"
+}
+
+Правила для "summary":
+- максимум ${DAILY_MEMORY_SUMMARY_MAX_LENGTH} символов;
+- 1-3 коротких предложения;
+- пиши о конкретном дне, в прошедшем времени;
+- сохраняй только полезное для будущих ответов: важные события, поездки, работу, отношения, заметное настроение, тревогу, триггеры, wins, повторяющиеся паттерны мышления;
+- включай метрики только если они есть и помогают понять день;
+- не повторяй общие стабильные факты о пользователе, если они не проявились именно в этот день;
+- не выдумывай причин, эмоций, событий или выводов;
+- избегай однотипных формулировок вроде "день был смешанным" без конкретики.`;
+
+const DAILY_MEMORY_SUMMARY_PROMPT_EN = `You create short-term daily memory for a CBT bot.
+
+You are given the user's entries for one day, analyses, possible follow-up discussions, and metrics.
+
+Return ONLY a JSON object:
+{
+  "summary": "short day summary for future context"
+}
+
+Rules for "summary":
+- maximum ${DAILY_MEMORY_SUMMARY_MAX_LENGTH} characters;
+- 1-3 short sentences;
+- write about the specific day in past tense;
+- keep only what is useful for future replies: important events, travel, work, relationships, notable mood, anxiety, triggers, wins, repeated thinking patterns;
+- include metrics only if present and useful for understanding the day;
+- do not repeat stable general facts about the user unless they were specifically relevant that day;
+- do not invent causes, emotions, events, or conclusions;
+- avoid generic repeated wording like "the day was mixed" without specifics.`;

@@ -64,6 +64,16 @@ export interface ThreadMessageRow {
   created_at: string;
 }
 
+export interface DailyMemoryRow {
+  date: string;
+  summary: string;
+  source_entry_id: number | null;
+  llm_provider: string | null;
+  llm_model: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export class Queries {
   constructor(private db: Database.Database) {}
 
@@ -388,5 +398,36 @@ export class Queries {
 
   setMemory(content: string): void {
     this.db.prepare('UPDATE memory SET content = ?, updated_at = datetime(\'now\') WHERE id = 1').run(content);
+  }
+
+  getDailyMemoryByDateRange(start: string, end: string): DailyMemoryRow[] {
+    return this.db.prepare(
+      'SELECT * FROM daily_memory WHERE date >= ? AND date <= ? ORDER BY date ASC'
+    ).all(start, end) as DailyMemoryRow[];
+  }
+
+  upsertDailyMemory(memory: {
+    date: string;
+    summary: string;
+    source_entry_id?: number;
+    llm_provider?: string;
+    llm_model?: string;
+  }): void {
+    this.db.prepare(`
+      INSERT INTO daily_memory (date, summary, source_entry_id, llm_provider, llm_model)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(date) DO UPDATE SET
+        summary = excluded.summary,
+        source_entry_id = excluded.source_entry_id,
+        llm_provider = excluded.llm_provider,
+        llm_model = excluded.llm_model,
+        updated_at = datetime('now')
+    `).run(
+      memory.date,
+      memory.summary,
+      memory.source_entry_id ?? null,
+      memory.llm_provider ?? null,
+      memory.llm_model ?? null,
+    );
   }
 }

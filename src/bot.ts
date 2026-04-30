@@ -6,6 +6,7 @@ import { transcribeVoiceMessage } from './services/transcription.js';
 import { analyzeEntry } from './services/analysis.js';
 import { handleThreadReply } from './services/chat.js';
 import { generateTestWeeklyReport, generateTestMonthlyReport, generateTestMorningBrief, generateMemory } from './services/reports.js';
+import { generateRecentDailyMemory, showRecentDailyMemory } from './services/daily-memory.js';
 import { MEMORY_MAX_LENGTH } from './prompts/memory.js';
 import { todayLocal, nowLocalTime, formatDateLocal } from './utils/date.js';
 import { sendSplitMessages, sendRawHtmlMessages, notifyChannelPostForwarded, postChannelHeader } from './utils/telegram.js';
@@ -58,6 +59,12 @@ export function createBot(): Bot {
       return;
     }
 
+    if (text === '/recentmemory' || text.startsWith('/recentmemory@')) {
+      logInfo('bot.channel_command', { command: '/recentmemory', chatId, messageId: ctx.channelPost.message_id });
+      showRecentDailyMemory(ctx.api, chatId).catch(err => logError('bot.command.recent_memory_failed', err, { chatId }));
+      return;
+    }
+
     if (text.startsWith('/setmemory ') || text.startsWith('/setmemory@')) {
       logInfo('bot.channel_command', { command: '/setmemory', chatId, messageId: ctx.channelPost.message_id });
       const content = text.replace(/^\/setmemory(@\S+)?\s+/, '').trim();
@@ -76,6 +83,12 @@ export function createBot(): Bot {
     if (text === '/generatememory' || text.startsWith('/generatememory@')) {
       logInfo('bot.channel_command', { command: '/generatememory', chatId, messageId: ctx.channelPost.message_id });
       generateMemory(ctx.api, chatId).catch(err => logError('bot.command.generate_memory_failed', err, { chatId }));
+      return;
+    }
+
+    if (text === '/generaterecentmemory' || text.startsWith('/generaterecentmemory@')) {
+      logInfo('bot.channel_command', { command: '/generaterecentmemory', chatId, messageId: ctx.channelPost.message_id });
+      generateRecentDailyMemory(ctx.api, chatId).catch(err => logError('bot.command.generate_recent_memory_failed', err, { chatId }));
       return;
     }
 

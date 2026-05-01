@@ -20,6 +20,12 @@ const OPENAI_PRICING: Record<string, { input: number; output: number }> = {
   'gpt-4o-mini': { input: 0.15, output: 0.6 },
 };
 const DEFAULT_OPENAI_PRICING = { input: 3.0, output: 15.0 };
+const DEFAULT_MAX_COMPLETION_TOKENS = 4096;
+const REASONING_MAX_COMPLETION_TOKENS = 12000;
+
+function isReasoningModel(model: string): boolean {
+  return /^(gpt-5|o[134])/.test(model);
+}
 
 export class OpenAILLM implements LLMProvider {
   private client: OpenAI;
@@ -42,22 +48,36 @@ export class OpenAILLM implements LLMProvider {
 
   async chat(messages: ChatMessage[], systemPrompt: string): Promise<LLMResult> {
     try {
+      const reasoningModel = isReasoningModel(this.model);
       const response = await withRetry(() => this.client.chat.completions.create({
         model: this.model,
         messages: [
           { role: 'system', content: systemPrompt },
           ...messages,
         ],
-        max_completion_tokens: 4096,
+        max_completion_tokens: reasoningModel ? REASONING_MAX_COMPLETION_TOKENS : DEFAULT_MAX_COMPLETION_TOKENS,
+        ...(reasoningModel ? {
+          reasoning_effort: 'low' as const,
+          verbosity: 'medium' as const,
+        } : {}),
       }));
 
       const text = response.choices[0]?.message?.content ?? '';
       const inputTokens = response.usage?.prompt_tokens ?? 0;
       const outputTokens = response.usage?.completion_tokens ?? 0;
+      const reasoningTokens = response.usage?.completion_tokens_details?.reasoning_tokens;
+      const finishReason = response.choices[0]?.finish_reason ?? 'unknown';
+
+      if (!text.trim()) {
+        throw new Error(
+          `OpenAI LLM returned empty text (finish_reason=${finishReason}, completion_tokens=${outputTokens}, reasoning_tokens=${reasoningTokens ?? 'unknown'})`,
+        );
+      }
+
       const pricing = OPENAI_PRICING[this.model] ?? DEFAULT_OPENAI_PRICING;
       const costUsd = (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
 
-      return { text, usage: { inputTokens, outputTokens, costUsd } };
+      return { text, usage: { inputTokens, outputTokens, reasoningTokens, costUsd } };
     } catch (err: unknown) {
       if (err instanceof OpenAI.APIError) {
         if (err.status === 401 || err.status === 429 || err.message?.includes('quota') || err.message?.includes('billing')) {

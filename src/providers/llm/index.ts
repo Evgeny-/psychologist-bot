@@ -5,6 +5,7 @@ import { OpenAILLM } from './openai.js';
 export interface LLMUsage {
   inputTokens: number;
   outputTokens: number;
+  reasoningTokens?: number;
   costUsd: number;
 }
 

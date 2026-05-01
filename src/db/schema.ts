@@ -5,6 +5,15 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
 
+  function addMetricColumnIfMissing(name: string, definition: string): void {
+    const hasColumn = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('metrics') WHERE name = ?").get(name) as { cnt: number };
+    if (hasColumn.cnt === 0) {
+      try {
+        db.exec(`ALTER TABLE metrics ADD COLUMN ${name} ${definition}`);
+      } catch { /* table may not exist yet */ }
+    }
+  }
+
   // Migrate: drop old reports table with restrictive CHECK constraint
   const hasReports = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='reports'").get();
   if (hasReports) {
@@ -28,14 +37,10 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
     }
   }
 
-  // Migration: add self_esteem and productivity columns to metrics
-  const hasSelfEsteem = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('metrics') WHERE name='self_esteem'").get() as { cnt: number };
-  if (hasSelfEsteem.cnt === 0) {
-    try {
-      db.exec("ALTER TABLE metrics ADD COLUMN self_esteem INTEGER CHECK(self_esteem BETWEEN 0 AND 10)");
-      db.exec("ALTER TABLE metrics ADD COLUMN productivity INTEGER CHECK(productivity BETWEEN 0 AND 10)");
-    } catch { /* table may not exist yet */ }
-  }
+  // Migrations: add active metric columns to existing metrics tables.
+  // Legacy columns such as self_esteem and energy may exist in old DBs, but new code no longer writes them.
+  addMetricColumnIfMissing('productivity', 'INTEGER CHECK(productivity BETWEEN 0 AND 10)');
+  addMetricColumnIfMissing('stress', 'INTEGER CHECK(stress BETWEEN 0 AND 10)');
 
   // Migration: add emotions_json, triggers_json, wins_json columns to analyses
   const hasEmotions = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('analyses') WHERE name='emotions_json'").get() as { cnt: number };
@@ -90,8 +95,7 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
       date TEXT NOT NULL,
       mood INTEGER CHECK(mood BETWEEN 0 AND 10),
       anxiety INTEGER CHECK(anxiety BETWEEN 0 AND 10),
-      energy INTEGER CHECK(energy BETWEEN 0 AND 10),
-      self_esteem INTEGER CHECK(self_esteem BETWEEN 0 AND 10),
+      stress INTEGER CHECK(stress BETWEEN 0 AND 10),
       productivity INTEGER CHECK(productivity BETWEEN 0 AND 10),
       custom_json TEXT,
       created_at TEXT DEFAULT (datetime('now'))

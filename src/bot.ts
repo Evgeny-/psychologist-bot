@@ -328,14 +328,14 @@ async function handleNewEntry(ctx: Context): Promise<void> {
     metricsExtracted: Object.keys(metrics).length,
   });
 
-  const hasMetrics = metrics.mood !== undefined || metrics.anxiety !== undefined || metrics.self_esteem !== undefined || metrics.productivity !== undefined;
+  const hasMetrics = metrics.mood !== undefined || metrics.anxiety !== undefined || metrics.stress !== undefined || metrics.productivity !== undefined;
   if (hasMetrics) {
     queries.insertMetrics({
       entry_id: entryId,
       date: today,
       mood: metrics.mood,
       anxiety: metrics.anxiety,
-      self_esteem: metrics.self_esteem,
+      stress: metrics.stress,
       productivity: metrics.productivity,
     });
     logInfo('bot.new_entry.metrics_saved', {
@@ -343,7 +343,7 @@ async function handleNewEntry(ctx: Context): Promise<void> {
       date: today,
       mood: metrics.mood,
       anxiety: metrics.anxiety,
-      selfEsteem: metrics.self_esteem,
+      stress: metrics.stress,
       productivity: metrics.productivity,
     });
   } else if (!queries.hasMetricsForDate(today)) {
@@ -376,7 +376,7 @@ async function handleStatsCommand(api: import('grammy').Api, chatId: number): Pr
     lines.push(strings.statsMetricsForDays.replace('{days}', '7'));
     if (avg.avgMood !== null) lines.push(strings.statsAvgMood.replace('{value}', avg.avgMood.toFixed(1)));
     if (avg.avgAnxiety !== null) lines.push(strings.statsAvgAnxiety.replace('{value}', avg.avgAnxiety.toFixed(1)));
-    if (avg.avgSelfEsteem !== null) lines.push(strings.statsAvgSelfEsteem.replace('{value}', avg.avgSelfEsteem.toFixed(1)));
+    if (avg.avgStress !== null) lines.push(strings.statsAvgStress.replace('{value}', avg.avgStress.toFixed(1)));
     if (avg.avgProductivity !== null) lines.push(strings.statsAvgProductivity.replace('{value}', avg.avgProductivity.toFixed(1)));
   } else {
     lines.push('');
@@ -391,7 +391,7 @@ async function handleStatsCommand(api: import('grammy').Api, chatId: number): Pr
       const parts: string[] = [];
       if (m.mood !== null) parts.push(`M${m.mood}`);
       if (m.anxiety !== null) parts.push(`A${m.anxiety}`);
-      if (m.self_esteem !== null) parts.push(`SE${m.self_esteem}`);
+      if (m.stress !== null) parts.push(`S${m.stress}`);
       if (m.productivity !== null) parts.push(`P${m.productivity}`);
       if (parts.length) lines.push(`${m.date}: ${parts.join(' ')}`);
     }
@@ -422,10 +422,10 @@ async function handleExportCommand(api: import('grammy').Api, chatId: number): P
     return;
   }
 
-  const csvHeader = 'date,local_time,type,mood,anxiety,self_esteem,productivity,text';
+  const csvHeader = 'date,local_time,type,mood,anxiety,stress,productivity,text';
   const rows = data.map((r) => {
     const text = (r.text || '').replace(/"/g, '""').replace(/\n/g, ' ');
-    return `${r.date},${r.local_time || ''},${r.type},${r.mood ?? ''},${r.anxiety ?? ''},${r.self_esteem ?? ''},${r.productivity ?? ''},"${text}"`;
+    return `${r.date},${r.local_time || ''},${r.type},${r.mood ?? ''},${r.anxiety ?? ''},${r.stress ?? ''},${r.productivity ?? ''},"${text}"`;
   });
 
   const csv = [csvHeader, ...rows].join('\n');

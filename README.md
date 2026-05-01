@@ -19,7 +19,7 @@ Multiple entries per day? The bot sees your earlier entries as reference, so it 
 - **Short-term memory** — compact daily summaries for the last 10 days, used in new analyses and thread replies
 - **Compare mode** — run Claude + OpenAI in parallel, see both analyses side by side
 - **Reports** — weekly and monthly summaries with smart context fitting
-- **Metrics** — mood, anxiety, energy (0-10), extracted from your speech
+- **Metrics** — mood, anxiety, stress, productivity (0-10), extracted from your speech
 - **Streak tracking** — consecutive days with entries
 - **CSV export** — download your diary data
 - **Cost tracking** — see per-call ASR and LLM costs

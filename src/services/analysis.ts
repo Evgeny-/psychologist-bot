@@ -23,7 +23,7 @@ interface AnalysisResult {
   metrics?: {
     mood?: number | null;
     anxiety?: number | null;
-    self_esteem?: number | null;
+    stress?: number | null;
     productivity?: number | null;
   };
   daily_memory_summary?: string;
@@ -34,7 +34,7 @@ interface AnalysisResult {
 export interface ExtractedMetrics {
   mood?: number;
   anxiety?: number;
-  self_esteem?: number;
+  stress?: number;
   productivity?: number;
 }
 
@@ -70,7 +70,7 @@ function extractMetrics(parsed: AnalysisResult | null): ExtractedMetrics {
   const result: ExtractedMetrics = {};
   if (typeof m.mood === 'number' && m.mood >= 0 && m.mood <= 10) result.mood = m.mood;
   if (typeof m.anxiety === 'number' && m.anxiety >= 0 && m.anxiety <= 10) result.anxiety = m.anxiety;
-  if (typeof m.self_esteem === 'number' && m.self_esteem >= 0 && m.self_esteem <= 10) result.self_esteem = m.self_esteem;
+  if (typeof m.stress === 'number' && m.stress >= 0 && m.stress <= 10) result.stress = m.stress;
   if (typeof m.productivity === 'number' && m.productivity >= 0 && m.productivity <= 10) result.productivity = m.productivity;
   return result;
 }
@@ -134,7 +134,7 @@ function formatMetricsLine(metrics: ExtractedMetrics): string {
   const parts: string[] = [];
   if (metrics.mood !== undefined) parts.push(`настроение: ${metrics.mood}`);
   if (metrics.anxiety !== undefined) parts.push(`тревога: ${metrics.anxiety}`);
-  if (metrics.self_esteem !== undefined) parts.push(`самооценка: ${metrics.self_esteem}`);
+  if (metrics.stress !== undefined) parts.push(`стресс: ${metrics.stress}`);
   if (metrics.productivity !== undefined) parts.push(`продуктивность: ${metrics.productivity}`);
   if (parts.length === 0) return '';
   return `\n<blockquote>📊 ${parts.join(' | ')}</blockquote>`;

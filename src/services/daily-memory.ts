@@ -50,7 +50,7 @@ function formatMetrics(rows: MetricsRow[]): string | null {
     const metricParts: string[] = [];
     if (row.mood !== null) metricParts.push(`mood=${row.mood}`);
     if (row.anxiety !== null) metricParts.push(`anxiety=${row.anxiety}`);
-    if (row.self_esteem !== null) metricParts.push(`self_esteem=${row.self_esteem}`);
+    if (row.stress !== null) metricParts.push(`stress=${row.stress}`);
     if (row.productivity !== null) metricParts.push(`productivity=${row.productivity}`);
     if (metricParts.length > 0) {
       const entryLabel = row.entry_id ? `entry ${row.entry_id}` : 'day';

@@ -26,7 +26,7 @@ export interface Strings {
   statsTotalEntries: string;
   statsAvgMood: string;
   statsAvgAnxiety: string;
-  statsAvgSelfEsteem: string;
+  statsAvgStress: string;
   statsAvgProductivity: string;
   statsNoMetrics: string;
   statsMetricsForDays: string;
@@ -34,7 +34,7 @@ export interface Strings {
   metricsPatterns: {
     mood: readonly string[];
     anxiety: readonly string[];
-    self_esteem: readonly string[];
+    stress: readonly string[];
     productivity: readonly string[];
   };
 }

@@ -27,7 +27,7 @@ const DAILY_SYSTEM_PROMPT_RU = `Ты — психолог-помощник, ра
   "metrics": {
     "mood": число от 0 до 10 или null,
     "anxiety": число от 0 до 10 или null,
-    "self_esteem": число от 0 до 10 или null,
+    "stress": число от 0 до 10 или null,
     "productivity": число от 0 до 10 или null
   },
   "daily_memory_summary": "краткая внутренняя сводка дня для будущего контекста",
@@ -75,7 +75,7 @@ const DAILY_SYSTEM_PROMPT_RU = `Ты — психолог-помощник, ра
 Поле "metrics": заполняй ТОЛЬКО если пользователь сам явно оценил своё состояние словами или числом.
 - mood: общее настроение (0 = ужасное, 10 = отличное)
 - anxiety: уровень тревоги (0 = нет тревоги, 10 = паника)
-- self_esteem: самооценка (0 = "я ничтожество", 10 = "я молодец, горжусь собой")
+- stress: уровень стресса/напряжения (0 = нет стресса, 10 = максимально перегружен)
 - productivity: продуктивность (0 = ничего не сделал, 10 = всё успел и даже больше)
 Если пользователь сказал что-то вроде "настроение на 7" или "тревога зашкаливает, на 9 из 10" — используй его оценку.
 Если пользователь описал состояние словами без числа (например "настроение отличное") — переведи в число.
@@ -85,7 +85,7 @@ const DAILY_SYSTEM_PROMPT_RU = `Ты — психолог-помощник, ра
 - 1-3 коротких предложения, максимум 500 символов
 - Если есть предыдущие записи за сегодня — обнови сводку всего дня с учётом текущей записи и предыдущих записей за сегодня
 - Если это первая запись дня — кратко опиши только текущую запись как день на данный момент
-- Сохраняй конкретные события, поездки, работу, отношения, заметное настроение, тревогу, триггеры, wins и важные паттерны мышления
+- Сохраняй конкретные события, поездки, работу, отношения, заметное настроение, тревогу/стресс, триггеры, wins и важные паттерны мышления
 - Не повторяй долгосрочную память и не пиши общую психологическую воду
 - Не выдумывай причин, эмоций, событий или выводов
 - Не упоминай JSON, "память" или служебные детали
@@ -118,7 +118,7 @@ You MUST return a JSON object in a \`\`\`json ... \`\`\` block with this structu
   "metrics": {
     "mood": number 0-10 or null,
     "anxiety": number 0-10 or null,
-    "self_esteem": number 0-10 or null,
+    "stress": number 0-10 or null,
     "productivity": number 0-10 or null
   },
   "daily_memory_summary": "short internal day summary for future context",
@@ -166,7 +166,7 @@ Cognitive distortions to track:
 The "metrics" field: fill in ONLY if the user explicitly assessed their own state in words or numbers.
 - mood: overall mood (0 = terrible, 10 = excellent)
 - anxiety: anxiety level (0 = no anxiety, 10 = panic)
-- self_esteem: self-esteem (0 = "I'm worthless", 10 = "I'm great, proud of myself")
+- stress: stress/tension level (0 = no stress, 10 = maximally overwhelmed)
 - productivity: productivity (0 = did nothing, 10 = accomplished everything and more)
 If the user said something like "mood is 7" or "anxiety is through the roof, 9 out of 10" — use their rating.
 If the user described a state in words without a number (e.g. "mood is great") — translate to a number.
@@ -176,7 +176,7 @@ The "daily_memory_summary" field is internal short-term memory about the DAY, no
 - 1-3 short sentences, maximum 500 characters
 - If there are earlier entries from today, update a whole-day summary using the current entry and earlier entries from today
 - If this is the first entry of the day, briefly summarize only the current entry as the day so far
-- Preserve concrete events, travel, work, relationships, notable mood, anxiety, triggers, wins, and important thinking patterns
+- Preserve concrete events, travel, work, relationships, notable mood, anxiety/stress, triggers, wins, and important thinking patterns
 - Do not repeat long-term memory and do not write generic psychological filler
 - Do not invent causes, emotions, events, or conclusions
 - Do not mention JSON, "memory", or internal details

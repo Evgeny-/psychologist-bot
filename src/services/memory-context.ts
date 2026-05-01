@@ -20,13 +20,13 @@ function average(values: number[]): number | null {
 function formatMetricsForDate(metrics: MetricsRow[]): string | null {
   const mood = average(metrics.map((m) => m.mood).filter((v): v is number => v !== null));
   const anxiety = average(metrics.map((m) => m.anxiety).filter((v): v is number => v !== null));
-  const selfEsteem = average(metrics.map((m) => m.self_esteem).filter((v): v is number => v !== null));
+  const stress = average(metrics.map((m) => m.stress).filter((v): v is number => v !== null));
   const productivity = average(metrics.map((m) => m.productivity).filter((v): v is number => v !== null));
 
   const parts: string[] = [];
   if (mood !== null) parts.push(config.language === 'ru' ? `настроение ${formatMetricValue(mood)}` : `mood ${formatMetricValue(mood)}`);
   if (anxiety !== null) parts.push(config.language === 'ru' ? `тревога ${formatMetricValue(anxiety)}` : `anxiety ${formatMetricValue(anxiety)}`);
-  if (selfEsteem !== null) parts.push(config.language === 'ru' ? `самооценка ${formatMetricValue(selfEsteem)}` : `self-esteem ${formatMetricValue(selfEsteem)}`);
+  if (stress !== null) parts.push(config.language === 'ru' ? `стресс ${formatMetricValue(stress)}` : `stress ${formatMetricValue(stress)}`);
   if (productivity !== null) parts.push(config.language === 'ru' ? `продуктивность ${formatMetricValue(productivity)}` : `productivity ${formatMetricValue(productivity)}`);
   return parts.length > 0 ? parts.join(', ') : null;
 }

@@ -17,6 +17,16 @@ export class ElevenLabsASR implements ASRProvider {
     formData.append('file', new Blob([new Uint8Array(audioBuffer)], { type: 'audio/ogg' }), 'audio.ogg');
     formData.append('model_id', this.model);
     formData.append('language_code', lang);
+    // Disable non-speech tagging so the transcript does not contain things
+    // like "(laughter)" or "(footsteps)" that would confuse the diary LLM.
+    // See https://elevenlabs.io/docs/api-reference/speech-to-text/convert
+    formData.append('tag_audio_events', 'false');
+    // Strip filler words ("hmm", "a-a-a"), false starts and other non-speech
+    // sounds. Only supported by scribe_v2; sending it to scribe_v1 would be
+    // rejected, so gate on the configured model.
+    if (this.model === 'scribe_v2') {
+      formData.append('no_verbatim', 'true');
+    }
 
     const response = await withRetry(() => fetch('https://api.elevenlabs.io/v1/speech-to-text', {
       method: 'POST',

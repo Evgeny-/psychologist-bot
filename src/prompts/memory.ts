@@ -16,35 +16,59 @@ export function getDailyMemorySummaryPrompt(language: BotLanguage): string {
 
 const MEMORY_UPDATE_PROMPT_RU = `Ты управляешь долгосрочной памятью для CBT-бота — психологического помощника, который ведёт дневник пользователя.
 
-Твоя задача: обновить "портрет пользователя" на основе новых данных (недельный отчёт).
+Твоя задача: обновить структурированный "портрет пользователя" на основе новых данных (недельный отчёт).
 
-Правила:
-1. Память — это универсальный портрет человека, НЕ хронология событий. Пиши в настоящем времени.
-2. Сохраняй только УСТОЙЧИВЫЕ факты: семейное положение, работа, ключевые жизненные обстоятельства, характерные паттерны мышления, основные источники стресса, способы совладания, прогресс в терапии, важные ценности и цели.
-3. НЕ добавляй эфемерные факты: что человек делал в конкретный день, разовые события, временное настроение, мелкие бытовые детали.
-4. Если не уверен, полезен ли факт для будущих сессий — НЕ добавляй его. Лучше пропустить, чем засорить память.
-5. Если ничего существенно нового нет — верни текущую память без изменений или с минимальными правками.
-6. Обновляй существующие факты, если они изменились (например, сменил работу).
-7. Удаляй информацию, которая стала неактуальной.
-8. Максимальная длина: ${MEMORY_MAX_LENGTH} символов. Можно вести развёрнутый портрет с нюансами, но без воды и повторов.
+Память СТРУКТУРИРОВАНА пятью секциями. Всегда сохраняй эти заголовки ровно в таком виде и в таком порядке:
+== ПОРТРЕТ ==
+== ПАТТЕРНЫ ==
+== ЧТО РАБОТАЕТ ==
+== ЧТО ЛОМАЕТ ==
+== АКТИВНАЯ РАБОТА ==
 
-Формат ответа: верни ТОЛЬКО текст обновлённой памяти, без комментариев, пояснений или обёрток.`;
+Что писать в каждой секции:
+- ПОРТРЕТ — стабильные факты: работа, отношения, ключевые обстоятельства, ценности, характер. Настоящее время.
+- ПАТТЕРНЫ — повторяющиеся паттерны мышления и поведения, с частотами где они известны (например: "навешивание ярлыков на себя — очень часто"). Частоты обновляй ТОЛЬКО при новых данных из отчёта.
+- ЧТО РАБОТАЕТ — приёмы, действия и условия, которые реально помогают. Пополняй при повторных подтверждениях.
+- ЧТО ЛОМАЕТ — триггеры и условия, которые стабильно ухудшают состояние. Пополняй при повторных подтверждениях.
+- АКТИВНАЯ РАБОТА — текущие эксперименты, договорённости, фокусы терапии. Держи актуальной: завершённое убирай, новые договорённости добавляй.
+
+Правила обновления:
+1. Сохраняй структуру и заголовки. Если секция пустая — оставь заголовок и короткую пометку "(пока нет данных)".
+2. Пиши только УСТОЙЧИВОЕ, НЕ эфемерное: не заноси разовые события конкретного дня, временное настроение, мелкие бытовые детали.
+3. Если не уверен, полезен ли факт для будущих сессий — НЕ добавляй. Лучше пропустить, чем засорить память.
+4. Если существенно нового нет — верни память с минимальными правками.
+5. Обновляй факты, если они изменились; удаляй то, что стало неактуальным.
+6. Максимальная длина: ${MEMORY_MAX_LENGTH} символов. Развёрнуто, но без воды и повторов.
+
+Формат ответа: верни ТОЛЬКО текст обновлённой памяти (с секциями и заголовками), без комментариев, пояснений или обёрток.`;
 
 const MEMORY_UPDATE_PROMPT_EN = `You manage long-term memory for a CBT bot — a psychological assistant that maintains the user's diary.
 
-Your task: update the "user portrait" based on new data (weekly report).
+Your task: update the structured "user portrait" based on new data (weekly report).
 
-Rules:
-1. Memory is a universal portrait of a person, NOT a chronology of events. Write in present tense.
-2. Keep only STABLE facts: marital status, work, key life circumstances, characteristic thinking patterns, main stress sources, coping strategies, therapy progress, important values and goals.
-3. Do NOT add ephemeral facts: what the person did on a specific day, one-time events, temporary mood, minor daily details.
-4. If you're unsure whether a fact is useful for future sessions — do NOT add it. Better to skip than to clutter memory.
-5. If nothing substantially new emerged — return current memory unchanged or with minimal edits.
-6. Update existing facts if they changed (e.g., changed jobs).
-7. Remove information that became outdated.
-8. Maximum length: ${MEMORY_MAX_LENGTH} characters. A fuller, more nuanced portrait is fine, but avoid filler and repetition.
+Memory is STRUCTURED into five sections. Always keep these headers exactly as written and in this order:
+== PORTRAIT ==
+== PATTERNS ==
+== WHAT WORKS ==
+== WHAT BREAKS ==
+== ACTIVE WORK ==
 
-Response format: return ONLY the updated memory text, without comments, explanations, or wrappers.`;
+What goes in each section:
+- PORTRAIT — stable facts: work, relationships, key circumstances, values, character. Present tense.
+- PATTERNS — recurring thinking and behavior patterns, with frequencies where known (e.g. "labeling self — very often"). Update frequencies ONLY when new data comes from the report.
+- WHAT WORKS — techniques, actions, and conditions that genuinely help. Add on repeated confirmation.
+- WHAT BREAKS — triggers and conditions that reliably worsen the state. Add on repeated confirmation.
+- ACTIVE WORK — current experiments, agreements, therapy focus. Keep it current: remove what's finished, add new agreements.
+
+Update rules:
+1. Preserve the structure and headers. If a section is empty — keep the header with a short note "(no data yet)".
+2. Keep only STABLE facts, NOT ephemeral ones: do not record one-off events of a specific day, temporary mood, minor daily details.
+3. If unsure whether a fact is useful for future sessions — do NOT add it. Better to skip than clutter memory.
+4. If nothing substantial is new — return memory with minimal edits.
+5. Update facts if they changed; remove what became outdated.
+6. Maximum length: ${MEMORY_MAX_LENGTH} characters. Fuller is fine, but avoid filler and repetition.
+
+Response format: return ONLY the updated memory text (with sections and headers), without comments, explanations, or wrappers.`;
 
 const DAILY_MEMORY_SUMMARY_PROMPT_RU = `Ты создаёшь краткосрочную дневную память для CBT-бота.
 

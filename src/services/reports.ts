@@ -6,10 +6,13 @@ import { getMorningSystemPrompt } from '../prompts/morning.js';
 import { config } from '../config.js';
 import { t } from '../i18n/index.js';
 import { queries } from '../db/index.js';
+import type { MetricsRow } from '../db/queries.js';
 import { sendSplitMessages, sendRawHtmlMessages, markdownToHtml, postChannelHeader } from '../utils/telegram.js';
 import { formatDateLocal, shiftLocalDate, todayLocal } from '../utils/date.js';
 import { getMemoryUpdatePrompt, MEMORY_MAX_LENGTH } from '../prompts/memory.js';
 import { sendMetricsChart } from './charts.js';
+import { getDistortionCounts } from './patterns.js';
+import { sendAudioReply } from './audio-replies.js';
 import { logError, logInfo, logWarn } from '../utils/logger.js';
 
 // ~400k chars ≈ 100k tokens — keeps us under Sonnet's 200k limit with room for system prompt + response
@@ -38,9 +41,26 @@ interface DaySummary {
 }
 
 interface MorningBriefEnvelope {
-  message?: string;
+  message?: string | null;
+  skip?: boolean;
   grounding?: string[];
-  has_meaningful_carryover?: boolean;
+}
+
+interface WeeklyExperimentResult {
+  status?: 'done' | 'skipped';
+  note?: string;
+}
+
+interface WeeklyNextExperiment {
+  text?: string;
+  success_criterion?: string;
+  target_count?: number;
+}
+
+interface WeeklyReportEnvelope {
+  report_text?: string;
+  experiment_result?: WeeklyExperimentResult | null;
+  next_experiment?: WeeklyNextExperiment | null;
 }
 
 function buildDaySummaries(start: string, end: string): DaySummary[] {
@@ -131,14 +151,18 @@ function buildSystemPromptWithMemory(basePrompt: string): string {
   return `${basePrompt}\n\n${label}\n${memory}\n---`;
 }
 
-function parseMorningBriefJson(text: string): MorningBriefEnvelope | null {
+function parseJsonEnvelope<T>(text: string): T | null {
   const match = text.match(/```json\s*([\s\S]*?)\s*```/);
   const jsonText = match ? match[1] : text;
   try {
-    return JSON.parse(jsonText) as MorningBriefEnvelope;
+    return JSON.parse(jsonText) as T;
   } catch {
     return null;
   }
+}
+
+function parseMorningBriefJson(text: string): MorningBriefEnvelope | null {
+  return parseJsonEnvelope<MorningBriefEnvelope>(text);
 }
 
 function parseMorningBriefText(text: string): string {
@@ -147,6 +171,125 @@ function parseMorningBriefText(text: string): string {
     return parsed.message.trim();
   }
   return text.replace(/```json\s*[\s\S]*?\s*```/, '').trim() || text.trim();
+}
+
+/** Day-of-week "genre" hint for the morning brief, chosen by weekday. */
+function morningGenreForDate(date: string): string {
+  const [y, m, d] = date.split('-').map(Number);
+  const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=Sun..6=Sat
+  const ru = [
+    'связь с людьми / благодарность',            // Sun
+    'фокус недели + эксперимент',                 // Mon
+    'вопрос дня',                                 // Tue
+    'микро-действие на сегодня',                  // Wed
+    'за каким паттерном понаблюдать',             // Thu
+    'уязвимая зона вечера/выходных по твоим данным', // Fri
+    'тело и ресурс',                              // Sat
+  ];
+  const en = [
+    'connection with people / gratitude',         // Sun
+    'week focus + experiment',                    // Mon
+    'question of the day',                        // Tue
+    'micro-action for today',                     // Wed
+    'which pattern to watch',                     // Thu
+    'vulnerable zone of the evening/weekend from your data', // Fri
+    'body and resource',                          // Sat
+  ];
+  return config.language === 'ru' ? ru[weekday] : en[weekday];
+}
+
+function averageMetric(rows: MetricsRow[], key: keyof MetricsRow): number | null {
+  const values = rows.map((r) => r[key]).filter((v): v is number => typeof v === 'number');
+  if (values.length === 0) return null;
+  return values.reduce((sum, v) => sum + v, 0) / values.length;
+}
+
+function formatMetricNum(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+/** Compact per-day metrics trend for the last 7 days ending at `endDate`. */
+function buildMetricsTrendBlock(endDate: string): string | null {
+  const startDate = shiftLocalDate(endDate, -6);
+  const rows = queries.getMetricsByDateRange(startDate, endDate);
+  if (rows.length === 0) return null;
+
+  const byDate = new Map<string, MetricsRow[]>();
+  for (const row of rows) {
+    const existing = byDate.get(row.date);
+    if (existing) existing.push(row);
+    else byDate.set(row.date, [row]);
+  }
+
+  const lines: string[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const date = shiftLocalDate(endDate, -i);
+    const dayRows = byDate.get(date);
+    if (!dayRows || dayRows.length === 0) continue;
+    const parts: string[] = [];
+    const mood = averageMetric(dayRows, 'mood');
+    const anxiety = averageMetric(dayRows, 'anxiety');
+    const stress = averageMetric(dayRows, 'stress');
+    const productivity = averageMetric(dayRows, 'productivity');
+    const routine = averageMetric(dayRows, 'routine');
+    if (mood !== null) parts.push(`mood ${formatMetricNum(mood)}`);
+    if (anxiety !== null) parts.push(`anx ${formatMetricNum(anxiety)}`);
+    if (stress !== null) parts.push(`str ${formatMetricNum(stress)}`);
+    if (productivity !== null) parts.push(`prod ${formatMetricNum(productivity)}`);
+    if (routine !== null) parts.push(`rout ${formatMetricNum(routine)}`);
+    if (parts.length > 0) lines.push(`[${date}] ${parts.join(' · ')}`);
+  }
+  if (lines.length === 0) return null;
+
+  const header = config.language === 'ru'
+    ? 'Тренд метрик за 7 дней (по дням)'
+    : '7-day metrics trend (by day)';
+  return `${header}:\n${lines.join('\n')}`;
+}
+
+/** Intervention context for the morning brief: experiment, intentions, trend, patterns, genre. */
+function buildMorningInterventionBlock(today: string, yesterday: string): string {
+  const parts: string[] = [];
+
+  try {
+    const active = queries.getActiveExperiment();
+    if (active) {
+      const target = active.target_count ?? '—';
+      const criterion = active.success_criterion ?? '—';
+      parts.push(config.language === 'ru'
+        ? `Активный эксперимент недели: ${active.text}. Критерий: ${criterion}. Прогресс: ${active.progress_count}/${target}`
+        : `Active weekly experiment: ${active.text}. Criterion: ${criterion}. Progress: ${active.progress_count}/${target}`);
+    }
+  } catch { /* fail-soft */ }
+
+  try {
+    const intentions = queries.getActionItemsForDate(yesterday).slice(0, 5);
+    if (intentions.length > 0) {
+      const label = config.language === 'ru' ? 'Вчерашние намерения' : "Yesterday's intentions";
+      parts.push(`${label}:\n${intentions.map((i) => `- ${i}`).join('\n')}`);
+    }
+  } catch { /* fail-soft */ }
+
+  try {
+    const trend = buildMetricsTrendBlock(yesterday);
+    if (trend) parts.push(trend);
+  } catch { /* fail-soft */ }
+
+  try {
+    const patterns = getDistortionCounts().slice(0, 3);
+    if (patterns.length > 0) {
+      const label = config.language === 'ru'
+        ? 'Топ паттернов (всего / за 30 дней)'
+        : 'Top patterns (total / last 30 days)';
+      parts.push(`${label}:\n${patterns.map((p) => `${p.type}: ${p.total} / ${p.last30}`).join('\n')}`);
+    }
+  } catch { /* fail-soft */ }
+
+  const genreLabel = config.language === 'ru' ? 'Жанр дня (подсказка формата)' : 'Genre of the day (format hint)';
+  parts.push(`${genreLabel}: ${morningGenreForDate(today)}`);
+
+  const header = config.language === 'ru' ? '=== ФОКУС И ДАННЫЕ ДЛЯ ИНТЕРВЕНЦИИ ===' : '=== FOCUS AND DATA FOR THE INTERVENTION ===';
+  return `${header}\n${parts.join('\n\n')}`;
 }
 
 function buildMorningBriefContext(today: string): { yesterday: string; context: string; hasYesterdayData: boolean } {
@@ -162,6 +305,7 @@ function buildMorningBriefContext(today: string): { yesterday: string; context: 
   const parts = [
     `Today morning date: ${today}`,
     `Primary source day: ${yesterday}`,
+    buildMorningInterventionBlock(today, yesterday),
     `=== YESTERDAY (${yesterday}) ===\n${primaryContext}`,
   ];
 
@@ -189,7 +333,8 @@ async function runWithProvider(
   endStr: string,
   provider: LLMProvider,
   replyToMessageId?: number,
-): Promise<void> {
+  extractDisplayText: (raw: string) => string = (raw) => raw.trim(),
+): Promise<string> {
   const start = Date.now();
   logInfo('report.llm.start', {
     reportType,
@@ -205,12 +350,13 @@ async function runWithProvider(
   });
   const result = await provider.analyze(context, systemPrompt);
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+  const displayText = extractDisplayText(result.text);
 
   queries.insertReport({
     type: reportType,
     period_start: startStr,
     period_end: endStr,
-    report_text: result.text,
+    report_text: displayText,
     llm_provider: provider.providerName,
     llm_model: provider.modelName,
   });
@@ -226,7 +372,7 @@ async function runWithProvider(
     meta = `<blockquote>${title}${costInfo}</blockquote>`;
   }
   // meta is already HTML — send raw text (not through markdownToHtml) for the meta part
-  const body = markdownToHtml(result.text.trim());
+  const body = markdownToHtml(displayText);
   await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}`, replyToMessageId);
   logInfo('report.llm.complete', {
     reportType,
@@ -236,11 +382,137 @@ async function runWithProvider(
     provider: provider.providerName,
     model: provider.modelName,
     elapsedSec: elapsed,
-    outputChars: result.text.length,
+    outputChars: displayText.length,
     inputTokens: result.usage?.inputTokens,
     outputTokens: result.usage?.outputTokens,
     costUsd: result.usage?.costUsd?.toFixed(5),
   });
+
+  return result.text;
+}
+
+function parseWeeklyEnvelope(text: string): WeeklyReportEnvelope | null {
+  return parseJsonEnvelope<WeeklyReportEnvelope>(text);
+}
+
+/** Pull the human-readable report body out of the weekly JSON envelope (fail-soft). */
+function extractWeeklyDisplayText(raw: string): string {
+  const env = parseWeeklyEnvelope(raw);
+  if (env && typeof env.report_text === 'string' && env.report_text.trim()) {
+    return env.report_text.trim();
+  }
+  return raw.replace(/```json\s*[\s\S]*?\s*```/, '').trim() || raw.trim();
+}
+
+/** This-week vs last-week distortion counters + active experiment context for the weekly report. */
+function buildWeeklyExperimentContext(startStr: string, endStr: string): string | null {
+  const parts: string[] = [];
+
+  try {
+    const active = queries.getActiveExperiment();
+    if (active) {
+      const events = queries.getExperimentEventsSince(active.id, startStr);
+      const target = active.target_count ?? '—';
+      const criterion = active.success_criterion ?? '—';
+      const eventNotes = events
+        .map((e) => (e.note ? `- ${e.note}` : null))
+        .filter((n): n is string => n !== null)
+        .slice(0, 10);
+      const lines = [
+        config.language === 'ru'
+          ? `Активный эксперимент: ${active.text}. Критерий: ${criterion}. Прогресс: ${active.progress_count}/${target}. Событий за неделю: ${events.length}.`
+          : `Active experiment: ${active.text}. Criterion: ${criterion}. Progress: ${active.progress_count}/${target}. Events this week: ${events.length}.`,
+      ];
+      if (eventNotes.length > 0) lines.push(eventNotes.join('\n'));
+      parts.push(lines.join('\n'));
+    }
+  } catch (err) {
+    logWarn('report.weekly.experiment_context_failed', { reason: err instanceof Error ? err.message : String(err) });
+  }
+
+  try {
+    const prevStart = shiftLocalDate(startStr, -7);
+    const prevEnd = shiftLocalDate(startStr, -1);
+    const rows = queries.getAnalysesWithDistortions();
+    const counts = new Map<string, { cur: number; prev: number }>();
+    for (const row of rows) {
+      const date = (row.created_at || '').slice(0, 10);
+      const inCur = date >= startStr && date <= endStr;
+      const inPrev = date >= prevStart && date <= prevEnd;
+      if (!inCur && !inPrev) continue;
+      let parsed: unknown;
+      try { parsed = JSON.parse(row.distortions_json); } catch { continue; }
+      if (!Array.isArray(parsed)) continue;
+      for (const item of parsed) {
+        const rawType = item && typeof item === 'object' && typeof (item as { type?: unknown }).type === 'string'
+          ? (item as { type: string }).type : null;
+        if (!rawType) continue;
+        const type = rawType.replace(/\s+/g, ' ').trim().toLowerCase();
+        if (!type) continue;
+        const bucket = counts.get(type) ?? { cur: 0, prev: 0 };
+        if (inCur) bucket.cur += 1;
+        if (inPrev) bucket.prev += 1;
+        counts.set(type, bucket);
+      }
+    }
+    if (counts.size > 0) {
+      const sorted = Array.from(counts.entries())
+        .sort((a, b) => (b[1].cur + b[1].prev) - (a[1].cur + a[1].prev))
+        .slice(0, 7);
+      const label = config.language === 'ru'
+        ? 'Счётчики паттернов (прошлая неделя → эта неделя)'
+        : 'Pattern counters (last week → this week)';
+      const line = sorted.map(([type, c]) => `${type} ${c.prev}→${c.cur}`).join(', ');
+      parts.push(`${label}: ${line}`);
+    }
+  } catch (err) {
+    logWarn('report.weekly.pattern_counters_failed', { reason: err instanceof Error ? err.message : String(err) });
+  }
+
+  if (parts.length === 0) return null;
+  const header = config.language === 'ru' ? '=== ЭКСПЕРИМЕНТ И ПАТТЕРНЫ НЕДЕЛИ ===' : '=== WEEK EXPERIMENT AND PATTERNS ===';
+  return `${header}\n${parts.join('\n\n')}`;
+}
+
+/** Close the active experiment and/or start the next one, based on the weekly envelope. */
+function applyWeeklyExperiment(env: WeeklyReportEnvelope, today: string): void {
+  try {
+    const active = queries.getActiveExperiment();
+    const result = env.experiment_result;
+    const next = env.next_experiment;
+    const hasNext = !!(next && typeof next.text === 'string' && next.text.trim());
+
+    if (active) {
+      if (result && (result.status === 'done' || result.status === 'skipped')) {
+        queries.closeExperiment(active.id, {
+          status: result.status,
+          result_note: typeof result.note === 'string' ? result.note : undefined,
+          end_date: today,
+        });
+        logInfo('experiment.weekly.closed', { experimentId: active.id, status: result.status });
+      } else if (hasNext) {
+        // Rolling over to a new experiment — auto-close the old one to avoid two active.
+        queries.closeExperiment(active.id, {
+          status: 'skipped',
+          result_note: config.language === 'ru' ? 'Авто-закрыт при смене эксперимента' : 'Auto-closed at experiment rollover',
+          end_date: today,
+        });
+        logInfo('experiment.weekly.auto_closed', { experimentId: active.id });
+      }
+    }
+
+    if (hasNext && next) {
+      const id = queries.insertExperiment({
+        text: next.text!.trim(),
+        success_criterion: typeof next.success_criterion === 'string' ? next.success_criterion : undefined,
+        target_count: typeof next.target_count === 'number' ? next.target_count : undefined,
+        start_date: today,
+      });
+      logInfo('experiment.weekly.created', { experimentId: id, targetCount: next.target_count });
+    }
+  } catch (err) {
+    logWarn('experiment.weekly.apply_failed', { reason: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 async function runWeeklyReport(
@@ -264,7 +536,9 @@ async function runWeeklyReport(
     return;
   }
 
-  const context = fitContext(summaries, MAX_CONTEXT_CHARS);
+  const baseContext = fitContext(summaries, MAX_CONTEXT_CHARS);
+  const experimentContext = buildWeeklyExperimentContext(startStr, endStr);
+  const context = experimentContext ? `${experimentContext}\n\n---\n\n${baseContext}` : baseContext;
   const systemPrompt = buildSystemPromptWithMemory(getWeeklySystemPrompt(config.language));
 
   const strings = t();
@@ -281,9 +555,25 @@ async function runWeeklyReport(
 
   const providers = config.compareMode ? createAllLLMProviders() : [createLLMProvider()];
 
-  for (const provider of providers) {
+  // The CONFIGURED primary provider's envelope drives the experiment lifecycle.
+  // If the primary fails or returns an unparsable envelope, fall back to any other
+  // successful provider so a single outage doesn't silently stall the weekly experiment.
+  let primaryEnvelope: WeeklyReportEnvelope | null = null;
+  let fallbackEnvelope: WeeklyReportEnvelope | null = null;
+
+  for (let i = 0; i < providers.length; i++) {
+    const provider = providers[i];
     try {
-      await runWithProvider(api, target.chatId, context, systemPrompt, title, reportType, startStr, endStr, provider, target.replyToMessageId);
+      const raw = await runWithProvider(
+        api, target.chatId, context, systemPrompt, title, reportType, startStr, endStr, provider, target.replyToMessageId,
+        extractWeeklyDisplayText,
+      );
+      const envelope = parseWeeklyEnvelope(raw);
+      if (provider.providerName === config.llm.provider) {
+        primaryEnvelope = envelope;
+      } else if (!fallbackEnvelope) {
+        fallbackEnvelope = envelope;
+      }
     } catch (err) {
       logError('report.weekly.provider_failed', err, {
         reportType,
@@ -296,6 +586,18 @@ async function runWeeklyReport(
       const errMsg = err instanceof Error ? err.message : String(err);
       await sendRawHtmlMessages(api, target.chatId, `<blockquote>${title}\n${label}</blockquote>\n\nError: ${errMsg}`, target.replyToMessageId);
     }
+  }
+
+  // Only the real weekly report (not test runs) mutates the experiment lifecycle.
+  const effectiveEnvelope = primaryEnvelope ?? fallbackEnvelope;
+  if (!primaryEnvelope && fallbackEnvelope) {
+    logWarn('report.weekly.experiment_fallback_envelope', {
+      reportType,
+      configuredPrimary: config.llm.provider,
+    });
+  }
+  if (reportType === 'weekly' && effectiveEnvelope) {
+    applyWeeklyExperiment(effectiveEnvelope, todayLocal());
   }
 }
 
@@ -451,18 +753,65 @@ async function runMorningBrief(
     });
   }
 
+  const isTest = reportType === 'test_morning_brief';
+  // grounding comes straight from LLM JSON — guard the type, not just truthiness.
+  const groundingList = Array.isArray(parsed?.grounding)
+    ? parsed.grounding.filter((g): g is string => typeof g === 'string' && g.trim() !== '')
+    : [];
+  const skipReason = groundingList.length ? groundingList.join('; ') : 'no concrete focus';
+  const parsedMessage = typeof parsed?.message === 'string' ? parsed.message.trim() : '';
+  // Treat a parsed envelope with no usable message as a skip too: falling back to the
+  // raw model output would dump the literal JSON envelope into the chat.
+  const shouldSkip = parsed !== null && (parsed.skip === true || parsedMessage === '');
+  if (parsed !== null && parsed.skip !== true && parsedMessage === '') {
+    logWarn('report.morning.empty_message', { reportType, today, yesterday, provider: llm.providerName, model: llm.modelName });
+  }
+
+  if (shouldSkip && !isTest) {
+    // Nothing concrete to intervene on — do NOT send a message, but DO record the run:
+    // hasReportForPeriod() is the per-day dedup guard, and without a row a restart
+    // would re-trigger the morning brief later the same day.
+    queries.insertReport({
+      type: reportType,
+      period_start: yesterday,
+      period_end: today,
+      report_text: `(skipped: ${skipReason})`,
+      llm_provider: llm.providerName,
+      llm_model: llm.modelName,
+    });
+    logInfo('report.morning.skipped', {
+      reportType,
+      today,
+      yesterday,
+      provider: llm.providerName,
+      model: llm.modelName,
+      groundingCount: groundingList.length,
+    });
+    return;
+  }
+
+  const outgoing = shouldSkip ? `(skip: ${skipReason})` : (parsed !== null ? parsedMessage : message);
+
   queries.insertReport({
     type: reportType,
     period_start: yesterday,
     period_end: today,
-    report_text: message,
+    report_text: outgoing,
     llm_provider: llm.providerName,
     llm_model: llm.modelName,
   });
 
   const costInfo = result.usage ? ` | $${result.usage.costUsd.toFixed(5)}` : '';
-  const body = markdownToHtml(message);
+  const body = markdownToHtml(outgoing);
   await sendRawHtmlMessages(api, chatId, `<blockquote>${title}${costInfo}</blockquote>\n\n${body}\n\n#bot`);
+
+  // P2.12: optionally also deliver the morning focus as a voice message.
+  if (!shouldSkip && config.morningBriefAudio && outgoing.trim()) {
+    await sendAudioReply(api, chatId, outgoing).catch((err) => {
+      logWarn('report.morning.audio_failed', { reportType, today, reason: err instanceof Error ? err.message : String(err) });
+    });
+  }
+
   logInfo('report.morning.complete', {
     reportType,
     today,
@@ -470,8 +819,9 @@ async function runMorningBrief(
     provider: llm.providerName,
     model: llm.modelName,
     elapsedMs: Date.now() - start,
-    outputChars: message.length,
-    hasMeaningfulCarryover: parsed?.has_meaningful_carryover,
+    outputChars: outgoing.length,
+    skip: shouldSkip,
+    audio: !shouldSkip && config.morningBriefAudio,
     groundingCount: parsed?.grounding?.length,
     inputTokens: result.usage?.inputTokens,
     outputTokens: result.usage?.outputTokens,

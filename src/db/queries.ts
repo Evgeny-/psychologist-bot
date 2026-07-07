@@ -74,6 +74,34 @@ export interface DailyMemoryRow {
   updated_at: string;
 }
 
+export interface ExperimentRow {
+  id: number;
+  text: string;
+  success_criterion: string | null;
+  target_count: number | null;
+  progress_count: number;
+  status: 'active' | 'done' | 'skipped';
+  start_date: string;
+  end_date: string | null;
+  result_note: string | null;
+  created_at: string;
+}
+
+export interface ExperimentEventRow {
+  id: number;
+  experiment_id: number;
+  entry_id: number | null;
+  counted: number;
+  note: string | null;
+  created_at: string;
+}
+
+export interface EntryEmbeddingRow {
+  entry_id: number;
+  model: string;
+  vector: Buffer;
+}
+
 export class Queries {
   constructor(private db: Database.Database) {}
 
@@ -432,5 +460,183 @@ export class Queries {
       memory.llm_provider ?? null,
       memory.llm_model ?? null,
     );
+  }
+
+  // --- Experiments (behavioural experiments / weekly focus) ---
+
+  getActiveExperiment(): ExperimentRow | null {
+    const row = this.db.prepare(
+      "SELECT * FROM experiments WHERE status = 'active' ORDER BY start_date DESC, id DESC LIMIT 1"
+    ).get() as ExperimentRow | undefined;
+    return row ?? null;
+  }
+
+  insertExperiment(experiment: {
+    text: string;
+    success_criterion?: string;
+    target_count?: number;
+    start_date: string;
+  }): number {
+    const stmt = this.db.prepare(`
+      INSERT INTO experiments (text, success_criterion, target_count, start_date)
+      VALUES (?, ?, ?, ?)
+    `);
+    const result = stmt.run(
+      experiment.text,
+      experiment.success_criterion ?? null,
+      experiment.target_count ?? null,
+      experiment.start_date,
+    );
+    return result.lastInsertRowid as number;
+  }
+
+  closeExperiment(id: number, close: {
+    status: 'done' | 'skipped';
+    result_note?: string;
+    end_date: string;
+  }): void {
+    this.db.prepare(
+      'UPDATE experiments SET status = ?, result_note = ?, end_date = ? WHERE id = ?'
+    ).run(close.status, close.result_note ?? null, close.end_date, id);
+  }
+
+  incrementExperimentProgress(id: number): void {
+    this.db.prepare(
+      'UPDATE experiments SET progress_count = progress_count + 1 WHERE id = ?'
+    ).run(id);
+  }
+
+  insertExperimentEvent(event: {
+    experiment_id: number;
+    entry_id?: number;
+    counted?: number;
+    note?: string;
+  }): number {
+    const stmt = this.db.prepare(`
+      INSERT INTO experiment_events (experiment_id, entry_id, counted, note)
+      VALUES (?, ?, ?, ?)
+    `);
+    const result = stmt.run(
+      event.experiment_id,
+      event.entry_id ?? null,
+      event.counted ?? 1,
+      event.note ?? null,
+    );
+    return result.lastInsertRowid as number;
+  }
+
+  getExperimentEventsSince(experimentId: number, date: string): ExperimentEventRow[] {
+    // Filter by the LOCAL entry date, not created_at: created_at is UTC while report
+    // week boundaries are computed in config.timezone, so a late-evening entry near
+    // midnight would otherwise fall out of the week it belongs to.
+    return this.db.prepare(`
+      SELECT ev.* FROM experiment_events ev
+      LEFT JOIN entries e ON e.id = ev.entry_id
+      WHERE ev.experiment_id = ? AND COALESCE(e.date, substr(ev.created_at, 1, 10)) >= ?
+      ORDER BY ev.created_at ASC
+    `).all(experimentId, date) as ExperimentEventRow[];
+  }
+
+  // --- Pattern statistics ---
+
+  /**
+   * All analyses that recorded distortions, for pattern counters.
+   * One row per entry (the first-saved analysis): in compare mode every provider
+   * inserts its own analyses row for the same entry, and counting all of them
+   * would inflate pattern statistics ~2x.
+   */
+  getAnalysesWithDistortions(): Array<{ id: number; entry_id: number; distortions_json: string; created_at: string }> {
+    return this.db.prepare(`
+      SELECT a.id, a.entry_id, a.distortions_json,
+        COALESCE(e.date, substr(a.created_at, 1, 10)) as created_at
+      FROM analyses a
+      LEFT JOIN entries e ON e.id = a.entry_id
+      WHERE a.distortions_json IS NOT NULL AND a.distortions_json != ''
+        AND a.id IN (SELECT MIN(id) FROM analyses GROUP BY entry_id)
+      ORDER BY a.created_at ASC
+    `).all() as Array<{ id: number; entry_id: number; distortions_json: string; created_at: string }>;
+  }
+
+  /**
+   * Flattened action items from entries on a given date.
+   * One analyses row per entry (first-saved) — in compare mode each provider stores
+   * its own row, and flattening all of them duplicates the same intention.
+   */
+  getActionItemsForDate(date: string): string[] {
+    const rows = this.db.prepare(`
+      SELECT a.action_items_json
+      FROM analyses a
+      JOIN entries e ON e.id = a.entry_id
+      WHERE e.date = ? AND a.action_items_json IS NOT NULL AND a.action_items_json != ''
+        AND a.id IN (SELECT MIN(id) FROM analyses GROUP BY entry_id)
+      ORDER BY a.created_at ASC
+    `).all(date) as Array<{ action_items_json: string }>;
+
+    const items: string[] = [];
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(row.action_items_json);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (typeof item === 'string' && item.trim()) items.push(item.trim());
+          }
+        }
+      } catch { /* skip malformed */ }
+    }
+    return items;
+  }
+
+  // --- Entry embeddings (semantic similarity) ---
+
+  upsertEntryEmbedding(embedding: { entry_id: number; model: string; vector: Buffer }): void {
+    this.db.prepare(`
+      INSERT INTO entry_embeddings (entry_id, model, vector)
+      VALUES (?, ?, ?)
+      ON CONFLICT(entry_id) DO UPDATE SET
+        model = excluded.model,
+        vector = excluded.vector,
+        created_at = datetime('now')
+    `).run(embedding.entry_id, embedding.model, embedding.vector);
+  }
+
+  getAllEntryEmbeddings(): EntryEmbeddingRow[] {
+    return this.db.prepare(
+      'SELECT entry_id, model, vector FROM entry_embeddings'
+    ).all() as EntryEmbeddingRow[];
+  }
+
+  getEntriesWithoutEmbeddings(limit: number): Array<{ id: number; date: string; text: string }> {
+    return this.db.prepare(`
+      SELECT e.id, e.date, COALESCE(e.transcript, e.raw_text) as text
+      FROM entries e
+      LEFT JOIN entry_embeddings ee ON ee.entry_id = e.id
+      WHERE ee.entry_id IS NULL
+        AND COALESCE(e.transcript, e.raw_text) IS NOT NULL
+        AND TRIM(COALESCE(e.transcript, e.raw_text)) != ''
+      ORDER BY e.id ASC
+      LIMIT ?
+    `).all(limit) as Array<{ id: number; date: string; text: string }>;
+  }
+
+  /** Date + text snippet for a set of entry ids (for similarity rendering). */
+  getEntrySnippetsByIds(ids: number[]): Array<{ id: number; date: string; text: string | null }> {
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    return this.db.prepare(`
+      SELECT id, date, COALESCE(transcript, raw_text) as text
+      FROM entries WHERE id IN (${placeholders})
+    `).all(...ids) as Array<{ id: number; date: string; text: string | null }>;
+  }
+
+  /** daily_memory summaries keyed by date, for the given dates. */
+  getDailyMemorySummariesByDates(dates: string[]): Map<string, string> {
+    const map = new Map<string, string>();
+    if (dates.length === 0) return map;
+    const placeholders = dates.map(() => '?').join(',');
+    const rows = this.db.prepare(
+      `SELECT date, summary FROM daily_memory WHERE date IN (${placeholders})`
+    ).all(...dates) as Array<{ date: string; summary: string }>;
+    for (const row of rows) map.set(row.date, row.summary);
+    return map;
   }
 }

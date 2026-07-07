@@ -21,6 +21,9 @@ export interface Strings {
   morningBriefNoEntry: string;
   chartTitle: string;
   chartCaption: string;
+  chartPanelPositive: string;
+  chartPanelNegative: string;
+  chartWeekend: string;
   metricsAsk: string;
   streakInfo: string;
   statsHeader: string;

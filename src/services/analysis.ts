@@ -8,7 +8,24 @@ import { sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
 import { queries } from '../db/index.js';
 import { sendAudioReply } from './audio-replies.js';
 import { buildSystemPromptWithUserMemory, sanitizeDailyMemorySummary } from './memory-context.js';
+import { buildPatternContextBlock } from './patterns.js';
+import { findSimilarEpisodes, embedEntryText, computeEntryVector, storeEntryVector } from './similarity.js';
 import { logError, logInfo, logWarn } from '../utils/logger.js';
+
+interface ThoughtRecord {
+  thought?: string;
+  distortion?: string;
+  evidence_for?: string[];
+  evidence_against?: string[];
+  alternative?: string;
+  belief_question?: string;
+}
+
+interface ExperimentSignal {
+  relevant?: boolean;
+  counted?: boolean;
+  note?: string;
+}
 
 interface AnalysisResult {
   sentiment?: string;
@@ -28,6 +45,9 @@ interface AnalysisResult {
     routine?: number | null;
   };
   daily_memory_summary?: string;
+  thought_record?: ThoughtRecord | null;
+  experiment?: ExperimentSignal | null;
+  closing_question?: string | null;
   analysis_text?: string;
   reply_audio_requested?: boolean;
 }
@@ -128,6 +148,36 @@ function saveDailyMemorySummary(date: string, entryId: number, parsed: AnalysisR
   return true;
 }
 
+/**
+ * If the analysis marked the active experiment as counted, record the event and
+ * bump progress. Must run at most once per entry (first successful provider).
+ */
+function applyExperimentResult(entryId: number, parsed: AnalysisResult | null): boolean {
+  const experiment = parsed?.experiment;
+  if (!experiment?.counted) return false;
+  try {
+    const active = queries.getActiveExperiment();
+    if (!active) return false;
+    queries.insertExperimentEvent({
+      experiment_id: active.id,
+      entry_id: entryId,
+      counted: 1,
+      note: typeof experiment.note === 'string' ? experiment.note : undefined,
+    });
+    queries.incrementExperimentProgress(active.id);
+    logInfo('experiment.event.counted', {
+      entryId,
+      experimentId: active.id,
+      progress: active.progress_count + 1,
+      target: active.target_count,
+    });
+    return true;
+  } catch (err) {
+    logWarn('experiment.event.failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
+    return false;
+  }
+}
+
 function formatUsage(usage?: LLMUsage): string {
   if (!usage) return '';
   return ` | ${usage.inputTokens}in/${usage.outputTokens}out | $${usage.costUsd.toFixed(5)}`;
@@ -148,12 +198,74 @@ function getYesterdayDate(date: string): string {
   return shiftLocalDate(date, -1);
 }
 
-function buildUserPromptWithContext(text: string, date: string, entryId: number): string {
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      () => { clearTimeout(timer); resolve(fallback); },
+    );
+  });
+}
+
+function buildActiveExperimentBlock(): string | null {
+  try {
+    const active = queries.getActiveExperiment();
+    if (!active) return null;
+    const target = active.target_count ?? '—';
+    const criterion = active.success_criterion ?? '—';
+    return config.language === 'ru'
+      ? `--- АКТИВНЫЙ ЭКСПЕРИМЕНТ НЕДЕЛИ: ${active.text}. Критерий: ${criterion}. Прогресс: ${active.progress_count}/${target} ---`
+      : `--- ACTIVE WEEKLY EXPERIMENT: ${active.text}. Criterion: ${criterion}. Progress: ${active.progress_count}/${target} ---`;
+  } catch (err) {
+    logWarn('analysis.context.experiment_failed', { reason: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+function buildYesterdayIntentionsBlock(yesterday: string): string | null {
+  try {
+    const items = queries.getActionItemsForDate(yesterday).slice(0, 5);
+    if (items.length === 0) return null;
+    const header = config.language === 'ru'
+      ? '--- ВЧЕРАШНИЕ НАМЕРЕНИЯ (спроси об одном, если уместно) ---'
+      : "--- YESTERDAY'S INTENTIONS (ask about one, if fitting) ---";
+    return `${header}\n${items.map((i) => `- ${i}`).join('\n')}`;
+  } catch (err) {
+    logWarn('analysis.context.intentions_failed', { reason: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+async function buildUserPromptWithContext(
+  text: string,
+  date: string,
+  entryId: number,
+  entryVector: Float32Array | null,
+): Promise<string> {
   const earlier = queries.getEarlierEntriesForDate(date, entryId);
   const yesterday = getYesterdayDate(date);
   const yesterdayEntries = queries.getEntriesByDateRange(yesterday, yesterday);
 
   const sections: string[] = [];
+
+  const experimentBlock = buildActiveExperimentBlock();
+  if (experimentBlock) sections.push(experimentBlock);
+
+  const intentionsBlock = buildYesterdayIntentionsBlock(yesterday);
+  if (intentionsBlock) sections.push(intentionsBlock);
+
+  const patternBlock = buildPatternContextBlock(config.language);
+  if (patternBlock) sections.push(patternBlock);
+
+  const similarBlock = entryVector
+    ? await withTimeout(
+        findSimilarEpisodes(text, { excludeEntryId: entryId, queryVec: entryVector }),
+        4000,
+        null,
+      )
+    : null;
+  if (similarBlock) sections.push(similarBlock);
 
   let yesterdayBlock: string | null = null;
   if (yesterdayEntries.length > 0) {
@@ -209,7 +321,31 @@ export async function analyzeEntry(
     entryDate,
     { includeReferenceDate: false },
   );
-  const userPrompt = buildUserPromptWithContext(text, entryDate, entryId);
+  // One embedding call per entry: the same vector serves the similarity lookup below
+  // and is persisted afterwards for future lookups.
+  const entryVector = await withTimeout(
+    computeEntryVector(text).catch((err) => {
+      logWarn('similarity.embed_failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
+      return null;
+    }),
+    4000,
+    null,
+  );
+  const userPrompt = await buildUserPromptWithContext(text, entryDate, entryId, entryVector);
+
+  if (entryVector) {
+    try {
+      storeEntryVector(entryId, entryVector);
+    } catch (err) {
+      logWarn('similarity.store_failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
+    }
+  } else {
+    // Vector unavailable (timeout / transient error): retry in the background so the
+    // entry still becomes searchable later.
+    embedEntryText(entryId, text).catch((err) => {
+      logWarn('similarity.embed_failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
+    });
+  }
 
   // Save user's diary entry as first thread message
   queries.insertThreadMessage({
@@ -250,6 +386,7 @@ export async function analyzeEntry(
 
   const metrics = saveAnalysis(entryId, parsedResponse, llm);
   const dailyMemorySaved = saveDailyMemorySummary(entryDate, entryId, parsedResponse.parsed, llm);
+  const experimentCounted = applyExperimentResult(entryId, parsedResponse.parsed);
 
   // Save analysis as assistant message in thread
   const freeform = parsedResponse.freeform;
@@ -279,6 +416,9 @@ export async function analyzeEntry(
     wantsAudioReply: parsedResponse.wantsAudioReply,
     metricsExtracted: Object.keys(metrics).length,
     dailyMemorySaved,
+    thoughtRecord: !!parsedResponse.parsed?.thought_record,
+    closingQuestion: !!parsedResponse.parsed?.closing_question,
+    experimentCounted,
     inputTokens: result.usage?.inputTokens,
     outputTokens: result.usage?.outputTokens,
     costUsd: result.usage?.costUsd?.toFixed(5),
@@ -344,9 +484,11 @@ async function analyzeCompare(
 
       const freeform = parsedResponse.freeform;
 
-      // Save first successful provider's response as thread context for follow-up chat
+      // Save first successful provider's response as thread context for follow-up chat.
+      // Experiment progress is counted only once per entry (first successful provider).
       if (!threadSaved) {
         const dailyMemorySaved = saveDailyMemorySummary(entryDate, entryId, parsedResponse.parsed, llm);
+        const experimentCounted = applyExperimentResult(entryId, parsedResponse.parsed);
         queries.insertThreadMessage({
           thread_id: threadId,
           role: 'assistant',
@@ -361,6 +503,7 @@ async function analyzeCompare(
           provider: llm.providerName,
           model: llm.modelName,
           saved: dailyMemorySaved,
+          experimentCounted,
         });
       }
       const meta = `<blockquote>${label} | ${elapsed}s${formatUsage(result.usage)}</blockquote>`;
@@ -379,6 +522,8 @@ async function analyzeCompare(
         parsedJson: parsedResponse.parsedJson,
         wantsAudioReply: parsedResponse.wantsAudioReply,
         metricsExtracted: Object.keys(metrics).length,
+        thoughtRecord: !!parsedResponse.parsed?.thought_record,
+        closingQuestion: !!parsedResponse.parsed?.closing_question,
         inputTokens: result.usage?.inputTokens,
         outputTokens: result.usage?.outputTokens,
         costUsd: result.usage?.costUsd?.toFixed(5),

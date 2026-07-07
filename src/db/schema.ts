@@ -140,6 +140,35 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
       updated_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS experiments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      text TEXT NOT NULL,
+      success_criterion TEXT,
+      target_count INTEGER,
+      progress_count INTEGER DEFAULT 0,
+      status TEXT NOT NULL CHECK(status IN ('active', 'done', 'skipped')) DEFAULT 'active',
+      start_date TEXT NOT NULL,
+      end_date TEXT,
+      result_note TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS experiment_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      experiment_id INTEGER NOT NULL REFERENCES experiments(id),
+      entry_id INTEGER REFERENCES entries(id),
+      counted INTEGER DEFAULT 1,
+      note TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS entry_embeddings (
+      entry_id INTEGER PRIMARY KEY REFERENCES entries(id),
+      model TEXT NOT NULL,
+      vector BLOB NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
     INSERT OR IGNORE INTO memory (id, content) VALUES (1, '');
 
     CREATE INDEX IF NOT EXISTS idx_entries_date ON entries(date);
@@ -147,6 +176,8 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_reports_period ON reports(type, period_start);
     CREATE INDEX IF NOT EXISTS idx_thread_messages_thread ON thread_messages(thread_id);
     CREATE INDEX IF NOT EXISTS idx_daily_memory_date ON daily_memory(date);
+    CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status);
+    CREATE INDEX IF NOT EXISTS idx_experiment_events_experiment ON experiment_events(experiment_id);
   `);
 
   return db;

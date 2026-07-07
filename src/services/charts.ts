@@ -27,13 +27,19 @@ const DEFAULT_CHART_DAYS = 30;
 
 type MetricKey = 'mood' | 'anxiety' | 'stress' | 'productivity' | 'routine';
 
-const SERIES: ReadonlyArray<{ key: MetricKey; color: string }> = [
-  { key: 'mood', color: '#2e7d32' },
-  { key: 'anxiety', color: '#ef6c00' },
-  { key: 'stress', color: '#c62828' },
-  { key: 'productivity', color: '#1565c0' },
-  { key: 'routine', color: '#6a1b9a' },
-];
+const COLORS: Record<MetricKey, string> = {
+  mood: '#2e7d32',
+  productivity: '#1565c0',
+  routine: '#6a1b9a',
+  anxiety: '#ef6c00',
+  stress: '#c62828',
+};
+
+// Two stacked panels: "positive" metrics read higher = better, "negative" read higher = worse.
+// Splitting them keeps each panel's direction consistent, so a rising line means the same thing.
+const POSITIVE_KEYS: readonly MetricKey[] = ['mood', 'productivity', 'routine'];
+const NEGATIVE_KEYS: readonly MetricKey[] = ['anxiety', 'stress'];
+const ALL_KEYS: readonly MetricKey[] = [...POSITIVE_KEYS, ...NEGATIVE_KEYS];
 
 interface DayPoint {
   date: string;
@@ -49,7 +55,7 @@ function averageByDate(rows: MetricsRow[], dates: string[]): DayPoint[] {
   for (const row of rows) {
     const bucket = acc.get(row.date);
     if (!bucket) continue;
-    for (const { key } of SERIES) {
+    for (const key of ALL_KEYS) {
       const value = row[key];
       if (value !== null && value !== undefined) bucket[key].push(value);
     }
@@ -57,7 +63,7 @@ function averageByDate(rows: MetricsRow[], dates: string[]): DayPoint[] {
   return dates.map((date) => {
     const bucket = acc.get(date)!;
     const values = {} as Record<MetricKey, number | null>;
-    for (const { key } of SERIES) {
+    for (const key of ALL_KEYS) {
       const arr = bucket[key];
       values[key] = arr.length ? arr.reduce((sum, v) => sum + v, 0) / arr.length : null;
     }
@@ -69,87 +75,155 @@ function esc(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** Weekend = Saturday/Sunday, computed from the calendar date (timezone-independent). */
+function isWeekend(date: string): boolean {
+  const [y, m, d] = date.split('-').map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return dow === 0 || dow === 6;
+}
+
+interface PanelOptions {
+  title: string;
+  keys: readonly MetricKey[];
+  top: number;
+  bottom: number;
+  titleY: number;
+  legendY: number;
+  showXLabels: boolean;
+  weekendLabel?: string;
+}
+
 function buildSvg(points: DayPoint[], title: string): string {
   const W = 940;
-  const H = 560;
   const padL = 54;
   const padR = 24;
-  const padT = 78;
-  const padB = 58;
   const plotW = W - padL - padR;
-  const plotH = H - padT - padB;
   const n = points.length;
+  const spacing = n > 1 ? plotW / (n - 1) : plotW;
+  const strings = t();
 
   const xAt = (i: number): number => (n <= 1 ? padL + plotW / 2 : padL + (i / (n - 1)) * plotW);
-  const yAt = (v: number): number => padT + (1 - v / 10) * plotH;
+
+  // Layout: main title, then two stacked panels sharing the x-axis (labels under the lower panel).
+  const A_TITLE_Y = 54;
+  const A_LEGEND_Y = 76;
+  const A_TOP = 90;
+  const A_BOTTOM = 272;
+  const B_TITLE_Y = 302;
+  const B_LEGEND_Y = 324;
+  const B_TOP = 338;
+  const B_BOTTOM = 520;
+  const X_LABEL_Y = B_BOTTOM + 20;
+  const H = X_LABEL_Y + 14;
+
+  // Weekend (Sat/Sun) day indices, shaded as background bands in both panels.
+  const weekendIdx: number[] = [];
+  for (let i = 0; i < n; i++) if (isWeekend(points[i].date)) weekendIdx.push(i);
+
+  const step = Math.max(1, Math.round(n / 6));
 
   const parts: string[] = [];
   parts.push(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="${FONT_FAMILY}">`,
   );
   parts.push(`<rect width="${W}" height="${H}" fill="#ffffff"/>`);
+  parts.push(`<text x="${padL}" y="30" font-size="20" font-weight="bold" fill="#111827">${esc(title)}</text>`);
 
-  // Title
-  parts.push(`<text x="${padL}" y="32" font-size="20" font-weight="bold" fill="#111827">${esc(title)}</text>`);
+  const drawPanel = (opts: PanelOptions): void => {
+    const { keys, top, bottom } = opts;
+    const panelH = bottom - top;
+    const yAt = (v: number): number => top + (1 - v / 10) * panelH;
 
-  // Legend
-  let legendX = padL;
-  const legendY = 56;
-  for (const { key, color } of SERIES) {
-    const label = t().metricNames[key];
-    parts.push(`<rect x="${legendX}" y="${legendY - 11}" width="14" height="14" rx="3" fill="${color}"/>`);
-    parts.push(`<text x="${legendX + 20}" y="${legendY}" font-size="14" fill="#374151">${esc(label)}</text>`);
-    legendX += 20 + label.length * 8.6 + 24;
-  }
-
-  // Horizontal gridlines + Y axis labels (0..10)
-  for (let v = 0; v <= 10; v += 2) {
-    const y = yAt(v);
-    parts.push(`<line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="#e5e7eb" stroke-width="1"/>`);
-    parts.push(`<text x="${padL - 10}" y="${y + 4}" font-size="12" fill="#9ca3af" text-anchor="end">${v}</text>`);
-  }
-
-  // X axis labels (about every sixth day, always include the last)
-  const step = Math.max(1, Math.round(n / 6));
-  for (let i = 0; i < n; i++) {
-    if (i % step !== 0 && i !== n - 1) continue;
-    const x = xAt(i);
-    parts.push(`<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT + plotH}" stroke="#f3f4f6" stroke-width="1"/>`);
-    parts.push(
-      `<text x="${x}" y="${padT + plotH + 20}" font-size="11" fill="#9ca3af" text-anchor="middle">${esc(points[i].date.slice(5))}</text>`,
-    );
-  }
-
-  // Series: draw each contiguous run as a polyline (gaps break the line), plus a dot per real point.
-  for (const { key, color } of SERIES) {
-    let segment: string[] = [];
-    const flush = (): void => {
-      if (segment.length >= 2) {
-        parts.push(
-          `<polyline fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="${segment.join(' ')}"/>`,
-        );
-      }
-      segment = [];
-    };
-    for (let i = 0; i < n; i++) {
-      const value = points[i].values[key];
-      if (value === null) {
-        flush();
-        continue;
-      }
-      const x = xAt(i);
-      const y = yAt(value);
-      segment.push(`${x.toFixed(1)},${y.toFixed(1)}`);
-      parts.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${color}"/>`);
+    // Weekend background bands (drawn first, behind gridlines and series).
+    for (const i of weekendIdx) {
+      const left = Math.max(padL, xAt(i) - spacing / 2);
+      const right = Math.min(padL + plotW, xAt(i) + spacing / 2);
+      parts.push(`<rect x="${left.toFixed(1)}" y="${top}" width="${(right - left).toFixed(1)}" height="${panelH}" fill="#eceff3"/>`);
     }
-    flush();
-  }
 
-  // Axis frame
-  parts.push(`<line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" stroke="#d1d5db" stroke-width="1"/>`);
-  parts.push(
-    `<line x1="${padL}" y1="${padT + plotH}" x2="${padL + plotW}" y2="${padT + plotH}" stroke="#d1d5db" stroke-width="1"/>`,
-  );
+    // Panel title
+    parts.push(`<text x="${padL}" y="${opts.titleY}" font-size="13" font-weight="bold" fill="#4b5563">${esc(opts.title)}</text>`);
+
+    // Horizontal gridlines + Y axis labels (0..10)
+    for (let v = 0; v <= 10; v += 2) {
+      const y = yAt(v);
+      parts.push(`<line x1="${padL}" y1="${y.toFixed(1)}" x2="${padL + plotW}" y2="${y.toFixed(1)}" stroke="#e5e7eb" stroke-width="1"/>`);
+      parts.push(`<text x="${padL - 10}" y="${(y + 4).toFixed(1)}" font-size="12" fill="#9ca3af" text-anchor="end">${v}</text>`);
+    }
+
+    // Vertical gridlines (about every sixth day); x labels only under the lower panel
+    for (let i = 0; i < n; i++) {
+      if (i % step !== 0 && i !== n - 1) continue;
+      const x = xAt(i);
+      parts.push(`<line x1="${x.toFixed(1)}" y1="${top}" x2="${x.toFixed(1)}" y2="${bottom}" stroke="#f3f4f6" stroke-width="1"/>`);
+      if (opts.showXLabels) {
+        parts.push(`<text x="${x.toFixed(1)}" y="${X_LABEL_Y}" font-size="11" fill="#9ca3af" text-anchor="middle">${esc(points[i].date.slice(5))}</text>`);
+      }
+    }
+
+    // Legend (metric swatches, plus an optional weekend swatch)
+    let legendX = padL;
+    for (const key of keys) {
+      const label = strings.metricNames[key];
+      parts.push(`<rect x="${legendX.toFixed(1)}" y="${opts.legendY - 11}" width="14" height="14" rx="3" fill="${COLORS[key]}"/>`);
+      parts.push(`<text x="${(legendX + 20).toFixed(1)}" y="${opts.legendY}" font-size="14" fill="#374151">${esc(label)}</text>`);
+      legendX += 20 + label.length * 8.6 + 24;
+    }
+    if (opts.weekendLabel) {
+      parts.push(`<rect x="${legendX.toFixed(1)}" y="${opts.legendY - 11}" width="14" height="14" rx="3" fill="#eceff3" stroke="#d1d5db" stroke-width="1"/>`);
+      parts.push(`<text x="${(legendX + 20).toFixed(1)}" y="${opts.legendY}" font-size="14" fill="#374151">${esc(opts.weekendLabel)}</text>`);
+    }
+
+    // Series: each contiguous run is a polyline (gaps break the line), plus a dot per real point.
+    for (const key of keys) {
+      const color = COLORS[key];
+      let segment: string[] = [];
+      const flush = (): void => {
+        if (segment.length >= 2) {
+          parts.push(
+            `<polyline fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="${segment.join(' ')}"/>`,
+          );
+        }
+        segment = [];
+      };
+      for (let i = 0; i < n; i++) {
+        const value = points[i].values[key];
+        if (value === null) {
+          flush();
+          continue;
+        }
+        const x = xAt(i);
+        const y = yAt(value);
+        segment.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+        parts.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${color}"/>`);
+      }
+      flush();
+    }
+
+    // Frame (left + bottom)
+    parts.push(`<line x1="${padL}" y1="${top}" x2="${padL}" y2="${bottom}" stroke="#d1d5db" stroke-width="1"/>`);
+    parts.push(`<line x1="${padL}" y1="${bottom}" x2="${padL + plotW}" y2="${bottom}" stroke="#d1d5db" stroke-width="1"/>`);
+  };
+
+  drawPanel({
+    title: strings.chartPanelPositive,
+    keys: POSITIVE_KEYS,
+    top: A_TOP,
+    bottom: A_BOTTOM,
+    titleY: A_TITLE_Y,
+    legendY: A_LEGEND_Y,
+    showXLabels: false,
+    weekendLabel: strings.chartWeekend,
+  });
+  drawPanel({
+    title: strings.chartPanelNegative,
+    keys: NEGATIVE_KEYS,
+    top: B_TOP,
+    bottom: B_BOTTOM,
+    titleY: B_TITLE_Y,
+    legendY: B_LEGEND_Y,
+    showXLabels: true,
+  });
 
   parts.push('</svg>');
   return parts.join('');
@@ -169,7 +243,7 @@ export function renderMetricsChart(endDate: string, days: number = DEFAULT_CHART
   const startDate = shiftLocalDate(endDate, -(days - 1));
   const rows = queries.getMetricsByDateRange(startDate, endDate);
 
-  const hasAny = rows.some((row) => SERIES.some(({ key }) => row[key] !== null && row[key] !== undefined));
+  const hasAny = rows.some((row) => ALL_KEYS.some((key) => row[key] !== null && row[key] !== undefined));
   if (!hasAny) return null;
 
   const dates: string[] = [];

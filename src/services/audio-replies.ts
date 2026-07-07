@@ -4,6 +4,7 @@ import { t } from '../i18n/index.js';
 import { createTTSProvider, type TTSProvider, type TTSResult } from '../providers/tts/index.js';
 import { OpenAITTS } from '../providers/tts/openai.js';
 import { splitMessage } from '../utils/telegram.js';
+import { formatCompactNumber } from '../utils/format.js';
 import { logInfo, logWarn } from '../utils/logger.js';
 
 interface AudioReplyMeta {
@@ -35,10 +36,6 @@ function configuredPrimaryProviderLabel(): string {
   return config.tts.provider;
 }
 
-function formatCredits(credits: number): string {
-  return Number.isInteger(credits) ? String(credits) : credits.toFixed(1);
-}
-
 function buildCaption(meta: AudioReplyMeta, index: number, total: number): string {
   if (index > 0) {
     return total > 1 ? `${meta.providerLabel} | ${index + 1}/${total}` : meta.providerLabel;
@@ -50,7 +47,7 @@ function buildCaption(meta: AudioReplyMeta, index: number, total: number): strin
     parts.push(`$${meta.totalCostUsd.toFixed(5)}`);
   }
   if (meta.totalCredits !== undefined) {
-    parts.push(`${formatCredits(meta.totalCredits)} credits`);
+    parts.push(`${formatCompactNumber(meta.totalCredits)} credits`);
   }
 
   if (total > 1) {

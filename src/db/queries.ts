@@ -91,7 +91,6 @@ export interface ExperimentEventRow {
   id: number;
   experiment_id: number;
   entry_id: number | null;
-  counted: number;
   note: string | null;
   created_at: string;
 }
@@ -506,20 +505,19 @@ export class Queries {
     ).run(id);
   }
 
+  /** Throws on a duplicate (experiment_id, entry_id) pair — the UNIQUE index backstops double counting. */
   insertExperimentEvent(event: {
     experiment_id: number;
     entry_id?: number;
-    counted?: number;
     note?: string;
   }): number {
     const stmt = this.db.prepare(`
-      INSERT INTO experiment_events (experiment_id, entry_id, counted, note)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO experiment_events (experiment_id, entry_id, note)
+      VALUES (?, ?, ?)
     `);
     const result = stmt.run(
       event.experiment_id,
       event.entry_id ?? null,
-      event.counted ?? 1,
       event.note ?? null,
     );
     return result.lastInsertRowid as number;

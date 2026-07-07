@@ -3,33 +3,25 @@ import { queries } from '../db/index.js';
 import type { MetricsRow } from '../db/queries.js';
 import { DAILY_MEMORY_SUMMARY_MAX_LENGTH, RECENT_DAILY_MEMORY_DAYS } from '../prompts/memory.js';
 import { shiftLocalDate } from '../utils/date.js';
+import { averageMetric, formatCompactNumber } from '../utils/format.js';
 
 interface MemoryPromptOptions {
   includeReferenceDate?: boolean;
 }
 
-function formatMetricValue(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
-}
-
-function average(values: number[]): number | null {
-  if (values.length === 0) return null;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
 function formatMetricsForDate(metrics: MetricsRow[]): string | null {
-  const mood = average(metrics.map((m) => m.mood).filter((v): v is number => v !== null));
-  const anxiety = average(metrics.map((m) => m.anxiety).filter((v): v is number => v !== null));
-  const stress = average(metrics.map((m) => m.stress).filter((v): v is number => v !== null));
-  const productivity = average(metrics.map((m) => m.productivity).filter((v): v is number => v !== null));
-  const routine = average(metrics.map((m) => m.routine).filter((v): v is number => v !== null));
+  const mood = averageMetric(metrics, 'mood');
+  const anxiety = averageMetric(metrics, 'anxiety');
+  const stress = averageMetric(metrics, 'stress');
+  const productivity = averageMetric(metrics, 'productivity');
+  const routine = averageMetric(metrics, 'routine');
 
   const parts: string[] = [];
-  if (mood !== null) parts.push(config.language === 'ru' ? `настроение ${formatMetricValue(mood)}` : `mood ${formatMetricValue(mood)}`);
-  if (anxiety !== null) parts.push(config.language === 'ru' ? `тревога ${formatMetricValue(anxiety)}` : `anxiety ${formatMetricValue(anxiety)}`);
-  if (stress !== null) parts.push(config.language === 'ru' ? `стресс ${formatMetricValue(stress)}` : `stress ${formatMetricValue(stress)}`);
-  if (productivity !== null) parts.push(config.language === 'ru' ? `продуктивность ${formatMetricValue(productivity)}` : `productivity ${formatMetricValue(productivity)}`);
-  if (routine !== null) parts.push(config.language === 'ru' ? `рутина ${formatMetricValue(routine)}` : `routine ${formatMetricValue(routine)}`);
+  if (mood !== null) parts.push(config.language === 'ru' ? `настроение ${formatCompactNumber(mood)}` : `mood ${formatCompactNumber(mood)}`);
+  if (anxiety !== null) parts.push(config.language === 'ru' ? `тревога ${formatCompactNumber(anxiety)}` : `anxiety ${formatCompactNumber(anxiety)}`);
+  if (stress !== null) parts.push(config.language === 'ru' ? `стресс ${formatCompactNumber(stress)}` : `stress ${formatCompactNumber(stress)}`);
+  if (productivity !== null) parts.push(config.language === 'ru' ? `продуктивность ${formatCompactNumber(productivity)}` : `productivity ${formatCompactNumber(productivity)}`);
+  if (routine !== null) parts.push(config.language === 'ru' ? `рутина ${formatCompactNumber(routine)}` : `routine ${formatCompactNumber(routine)}`);
   return parts.length > 0 ? parts.join(', ') : null;
 }
 

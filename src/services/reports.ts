@@ -9,9 +9,11 @@ import { queries } from '../db/index.js';
 import type { MetricsRow } from '../db/queries.js';
 import { sendSplitMessages, sendRawHtmlMessages, markdownToHtml, postChannelHeader } from '../utils/telegram.js';
 import { formatDateLocal, shiftLocalDate, todayLocal } from '../utils/date.js';
+import { averageMetric, formatCompactNumber } from '../utils/format.js';
+import { parseJsonResponse, stripJsonBlock } from '../utils/json.js';
 import { getMemoryUpdatePrompt, MEMORY_MAX_LENGTH } from '../prompts/memory.js';
 import { sendMetricsChart } from './charts.js';
-import { getDistortionCounts } from './patterns.js';
+import { getDistortionCounts, getDistortionCountsByRange } from './patterns.js';
 import { sendAudioReply } from './audio-replies.js';
 import { logError, logInfo, logWarn } from '../utils/logger.js';
 
@@ -151,18 +153,8 @@ function buildSystemPromptWithMemory(basePrompt: string): string {
   return `${basePrompt}\n\n${label}\n${memory}\n---`;
 }
 
-function parseJsonEnvelope<T>(text: string): T | null {
-  const match = text.match(/```json\s*([\s\S]*?)\s*```/);
-  const jsonText = match ? match[1] : text;
-  try {
-    return JSON.parse(jsonText) as T;
-  } catch {
-    return null;
-  }
-}
-
 function parseMorningBriefJson(text: string): MorningBriefEnvelope | null {
-  return parseJsonEnvelope<MorningBriefEnvelope>(text);
+  return parseJsonResponse<MorningBriefEnvelope>(text);
 }
 
 function parseMorningBriefText(text: string): string {
@@ -170,7 +162,7 @@ function parseMorningBriefText(text: string): string {
   if (typeof parsed?.message === 'string' && parsed.message.trim()) {
     return parsed.message.trim();
   }
-  return text.replace(/```json\s*[\s\S]*?\s*```/, '').trim() || text.trim();
+  return stripJsonBlock(text) || text.trim();
 }
 
 /** Day-of-week "genre" hint for the morning brief, chosen by weekday. */
@@ -198,16 +190,6 @@ function morningGenreForDate(date: string): string {
   return config.language === 'ru' ? ru[weekday] : en[weekday];
 }
 
-function averageMetric(rows: MetricsRow[], key: keyof MetricsRow): number | null {
-  const values = rows.map((r) => r[key]).filter((v): v is number => typeof v === 'number');
-  if (values.length === 0) return null;
-  return values.reduce((sum, v) => sum + v, 0) / values.length;
-}
-
-function formatMetricNum(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
-}
-
 /** Compact per-day metrics trend for the last 7 days ending at `endDate`. */
 function buildMetricsTrendBlock(endDate: string): string | null {
   const startDate = shiftLocalDate(endDate, -6);
@@ -232,11 +214,11 @@ function buildMetricsTrendBlock(endDate: string): string | null {
     const stress = averageMetric(dayRows, 'stress');
     const productivity = averageMetric(dayRows, 'productivity');
     const routine = averageMetric(dayRows, 'routine');
-    if (mood !== null) parts.push(`mood ${formatMetricNum(mood)}`);
-    if (anxiety !== null) parts.push(`anx ${formatMetricNum(anxiety)}`);
-    if (stress !== null) parts.push(`str ${formatMetricNum(stress)}`);
-    if (productivity !== null) parts.push(`prod ${formatMetricNum(productivity)}`);
-    if (routine !== null) parts.push(`rout ${formatMetricNum(routine)}`);
+    if (mood !== null) parts.push(`mood ${formatCompactNumber(mood)}`);
+    if (anxiety !== null) parts.push(`anx ${formatCompactNumber(anxiety)}`);
+    if (stress !== null) parts.push(`str ${formatCompactNumber(stress)}`);
+    if (productivity !== null) parts.push(`prod ${formatCompactNumber(productivity)}`);
+    if (routine !== null) parts.push(`rout ${formatCompactNumber(routine)}`);
     if (parts.length > 0) lines.push(`[${date}] ${parts.join(' · ')}`);
   }
   if (lines.length === 0) return null;
@@ -392,7 +374,7 @@ async function runWithProvider(
 }
 
 function parseWeeklyEnvelope(text: string): WeeklyReportEnvelope | null {
-  return parseJsonEnvelope<WeeklyReportEnvelope>(text);
+  return parseJsonResponse<WeeklyReportEnvelope>(text);
 }
 
 /** Pull the human-readable report body out of the weekly JSON envelope (fail-soft). */
@@ -401,7 +383,7 @@ function extractWeeklyDisplayText(raw: string): string {
   if (env && typeof env.report_text === 'string' && env.report_text.trim()) {
     return env.report_text.trim();
   }
-  return raw.replace(/```json\s*[\s\S]*?\s*```/, '').trim() || raw.trim();
+  return stripJsonBlock(raw) || raw.trim();
 }
 
 /** This-week vs last-week distortion counters + active experiment context for the weekly report. */
@@ -433,36 +415,18 @@ function buildWeeklyExperimentContext(startStr: string, endStr: string): string 
   try {
     const prevStart = shiftLocalDate(startStr, -7);
     const prevEnd = shiftLocalDate(startStr, -1);
-    const rows = queries.getAnalysesWithDistortions();
-    const counts = new Map<string, { cur: number; prev: number }>();
-    for (const row of rows) {
-      const date = (row.created_at || '').slice(0, 10);
-      const inCur = date >= startStr && date <= endStr;
-      const inPrev = date >= prevStart && date <= prevEnd;
-      if (!inCur && !inPrev) continue;
-      let parsed: unknown;
-      try { parsed = JSON.parse(row.distortions_json); } catch { continue; }
-      if (!Array.isArray(parsed)) continue;
-      for (const item of parsed) {
-        const rawType = item && typeof item === 'object' && typeof (item as { type?: unknown }).type === 'string'
-          ? (item as { type: string }).type : null;
-        if (!rawType) continue;
-        const type = rawType.replace(/\s+/g, ' ').trim().toLowerCase();
-        if (!type) continue;
-        const bucket = counts.get(type) ?? { cur: 0, prev: 0 };
-        if (inCur) bucket.cur += 1;
-        if (inPrev) bucket.prev += 1;
-        counts.set(type, bucket);
-      }
-    }
-    if (counts.size > 0) {
-      const sorted = Array.from(counts.entries())
-        .sort((a, b) => (b[1].cur + b[1].prev) - (a[1].cur + a[1].prev))
+    const counts = getDistortionCountsByRange([
+      { start: prevStart, end: prevEnd },
+      { start: startStr, end: endStr },
+    ]);
+    if (counts.length > 0) {
+      const sorted = counts
+        .sort((a, b) => (b.counts[0] + b.counts[1]) - (a.counts[0] + a.counts[1]))
         .slice(0, 7);
       const label = config.language === 'ru'
         ? 'Счётчики паттернов (прошлая неделя → эта неделя)'
         : 'Pattern counters (last week → this week)';
-      const line = sorted.map(([type, c]) => `${type} ${c.prev}→${c.cur}`).join(', ');
+      const line = sorted.map((c) => `${c.type} ${c.counts[0]}→${c.counts[1]}`).join(', ');
       parts.push(`${label}: ${line}`);
     }
   } catch (err) {

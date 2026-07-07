@@ -10,6 +10,7 @@ import { sendAudioReply } from './audio-replies.js';
 import { buildSystemPromptWithUserMemory, sanitizeDailyMemorySummary } from './memory-context.js';
 import { buildPatternContextBlock } from './patterns.js';
 import { findSimilarEpisodes, embedEntryText, computeEntryVector, storeEntryVector } from './similarity.js';
+import { parseJsonResponse, stripJsonBlock } from '../utils/json.js';
 import { logError, logInfo, logWarn } from '../utils/logger.js';
 
 interface ThoughtRecord {
@@ -68,21 +69,11 @@ interface ParsedAnalysisResponse {
   parsedJson: boolean;
 }
 
-function parseAnalysisJson(text: string): AnalysisResult | null {
-  const match = text.match(/```json\s*([\s\S]*?)\s*```/);
-  const jsonText = match ? match[1] : text;
-  try {
-    return JSON.parse(jsonText) as AnalysisResult;
-  } catch {
-    return null;
-  }
-}
-
 function extractFreeformAnalysis(text: string, parsed: AnalysisResult | null): string {
   if (typeof parsed?.analysis_text === 'string' && parsed.analysis_text.trim()) {
     return parsed.analysis_text.trim();
   }
-  const afterJson = text.replace(/```json\s*[\s\S]*?\s*```/, '').trim();
+  const afterJson = stripJsonBlock(text);
   return afterJson || text;
 }
 
@@ -99,7 +90,7 @@ function extractMetrics(parsed: AnalysisResult | null): ExtractedMetrics {
 }
 
 function parseAnalysisResponse(responseText: string): ParsedAnalysisResponse {
-  const parsed = parseAnalysisJson(responseText);
+  const parsed = parseJsonResponse<AnalysisResult>(responseText);
   const freeform = extractFreeformAnalysis(responseText, parsed);
   const metrics = extractMetrics(parsed);
 
@@ -150,7 +141,9 @@ function saveDailyMemorySummary(date: string, entryId: number, parsed: AnalysisR
 
 /**
  * If the analysis marked the active experiment as counted, record the event and
- * bump progress. Must run at most once per entry (first successful provider).
+ * bump progress. Must run at most once per entry (first successful provider);
+ * the UNIQUE(experiment_id, entry_id) index backstops re-processing — a duplicate
+ * insert throws, lands in the catch below, and progress is not incremented.
  */
 function applyExperimentResult(entryId: number, parsed: AnalysisResult | null): boolean {
   const experiment = parsed?.experiment;
@@ -161,7 +154,6 @@ function applyExperimentResult(entryId: number, parsed: AnalysisResult | null): 
     queries.insertExperimentEvent({
       experiment_id: active.id,
       entry_id: entryId,
-      counted: 1,
       note: typeof experiment.note === 'string' ? experiment.note : undefined,
     });
     queries.incrementExperimentProgress(active.id);

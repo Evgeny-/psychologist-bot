@@ -59,6 +59,12 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
     try { db.exec("ALTER TABLE entries ADD COLUMN local_time TEXT"); } catch { /* table may not exist yet */ }
   }
 
+  // Migration: drop experiment_events.counted — always written as 1, never read
+  const hasCounted = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('experiment_events') WHERE name='counted'").get() as { cnt: number };
+  if (hasCounted.cnt > 0) {
+    try { db.exec("ALTER TABLE experiment_events DROP COLUMN counted"); } catch { /* SQLite without DROP COLUMN support */ }
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS entries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -157,7 +163,6 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       experiment_id INTEGER NOT NULL REFERENCES experiments(id),
       entry_id INTEGER REFERENCES entries(id),
-      counted INTEGER DEFAULT 1,
       note TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
@@ -179,6 +184,20 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status);
     CREATE INDEX IF NOT EXISTS idx_experiment_events_experiment ON experiment_events(experiment_id);
   `);
+
+  // Guard against double-counting: at most one experiment event per (experiment, entry).
+  // NULL entry_id rows are exempt (SQLite treats NULLs as distinct in unique indexes).
+  // If historical duplicates block index creation, keep the earliest row per pair.
+  try {
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_experiment_events_entry ON experiment_events(experiment_id, entry_id)');
+  } catch {
+    db.exec(`
+      DELETE FROM experiment_events WHERE entry_id IS NOT NULL AND id NOT IN (
+        SELECT MIN(id) FROM experiment_events WHERE entry_id IS NOT NULL GROUP BY experiment_id, entry_id
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_experiment_events_entry ON experiment_events(experiment_id, entry_id);
+    `);
+  }
 
   return db;
 }

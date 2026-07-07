@@ -8,6 +8,7 @@ import { sendAudioReply } from './audio-replies.js';
 import { buildSystemPromptWithUserMemory } from './memory-context.js';
 import { t } from '../i18n/index.js';
 import { todayLocal } from '../utils/date.js';
+import { parseJsonResponse, stripJsonBlock } from '../utils/json.js';
 import { logError, logInfo, logWarn } from '../utils/logger.js';
 
 interface ChatResponseEnvelope {
@@ -21,21 +22,11 @@ interface ParsedChatResponse {
   parsedJson: boolean;
 }
 
-function parseChatResponseJson(text: string): ChatResponseEnvelope | null {
-  const match = text.match(/```json\s*([\s\S]*?)\s*```/);
-  const jsonText = match ? match[1] : text;
-  try {
-    return JSON.parse(jsonText) as ChatResponseEnvelope;
-  } catch {
-    return null;
-  }
-}
-
 function parseChatResponse(text: string): ParsedChatResponse {
-  const parsed = parseChatResponseJson(text);
+  const parsed = parseJsonResponse<ChatResponseEnvelope>(text);
   const messageText = typeof parsed?.text === 'string' && parsed.text.trim()
     ? parsed.text.trim()
-    : text.replace(/```json\s*[\s\S]*?\s*```/, '').trim() || text.trim();
+    : stripJsonBlock(text) || text.trim();
 
   return {
     text: messageText,

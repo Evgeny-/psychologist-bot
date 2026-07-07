@@ -10,21 +10,12 @@ import {
 } from '../prompts/memory.js';
 import { markdownToHtml, postChannelHeader, sendRawHtmlMessages, sendSplitMessages } from '../utils/telegram.js';
 import { shiftLocalDate, todayLocal } from '../utils/date.js';
+import { parseJsonResponse } from '../utils/json.js';
 import { logError, logInfo, logWarn } from '../utils/logger.js';
 import { sanitizeDailyMemorySummary } from './memory-context.js';
 
 interface DailyMemorySummaryEnvelope {
   summary?: string;
-}
-
-function parseDailyMemorySummaryJson(text: string): DailyMemorySummaryEnvelope | null {
-  const match = text.match(/```json\s*([\s\S]*?)\s*```/);
-  const jsonText = match ? match[1] : text;
-  try {
-    return JSON.parse(jsonText) as DailyMemorySummaryEnvelope;
-  } catch {
-    return null;
-  }
 }
 
 function parseJsonList(value: string | null): string[] {
@@ -168,7 +159,7 @@ async function generateDailyMemoryForDate(date: string, llm: LLMProvider): Promi
 
   const start = Date.now();
   const result = await llm.analyze(context, getDailyMemorySummaryPrompt(config.language));
-  const parsed = parseDailyMemorySummaryJson(result.text);
+  const parsed = parseJsonResponse<DailyMemorySummaryEnvelope>(result.text);
   const summary = sanitizeDailyMemorySummary(parsed?.summary ?? '');
 
   if (!summary) {

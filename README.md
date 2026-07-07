@@ -18,8 +18,8 @@ Multiple entries per day? The bot sees your earlier entries as reference, so it 
 - **Morning brief** — every morning the bot posts a short carry-over note to the main channel based on yesterday's diary context
 - **Short-term memory** — compact daily summaries for the last 10 days, used in new analyses and thread replies
 - **Compare mode** — run Claude + OpenAI in parallel, see both analyses side by side
-- **Reports** — weekly and monthly summaries with smart context fitting
-- **Metrics** — mood, anxiety, stress, productivity (0-10), extracted from your speech
+- **Reports** — weekly and monthly summaries with smart context fitting, each with an attached 30-day metrics chart (rendered locally, gaps left blank for days you didn't log)
+- **Metrics** — mood, anxiety, stress, productivity, routine (0-10), extracted from your speech
 - **Streak tracking** — consecutive days with entries
 - **CSV export** — download your diary data
 - **Cost tracking** — see per-call ASR and LLM costs

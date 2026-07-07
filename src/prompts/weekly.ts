@@ -10,7 +10,7 @@ const WEEKLY_SYSTEM_PROMPT_RU = `Ты — психолог-помощник (К�
 Подготовь недельный отчёт на русском языке:
 
 1. **Общая картина** — как прошла неделя в целом (2-3 предложения)
-2. **Метрики** — тренды настроения, тревоги, стресса, продуктивности (средние, мин, макс). Если метрики доступны.
+2. **Метрики** — тренды настроения, тревоги, стресса, продуктивности, рутины (средние, мин, макс). Если метрики доступны.
 3. **Эмоции** — какие эмоции преобладали, были ли резкие перепады
 4. **Триггеры** — что чаще всего провоцировало негативные реакции (если упоминалось)
 5. **Достижения** — что удалось, чем можно гордиться
@@ -26,7 +26,7 @@ const WEEKLY_SYSTEM_PROMPT_EN = `You are a CBT psychology assistant. You are giv
 Prepare a weekly report in English:
 
 1. **Overview** — how the week went overall (2-3 sentences)
-2. **Metrics** — mood, anxiety, stress, productivity trends (averages, min, max). If metrics are available.
+2. **Metrics** — mood, anxiety, stress, productivity, routine trends (averages, min, max). If metrics are available.
 3. **Emotions** — which emotions dominated, any sharp swings
 4. **Triggers** — what most often provoked negative reactions (if mentioned)
 5. **Wins** — what was achieved, what to be proud of

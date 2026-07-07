@@ -1,4 +1,5 @@
 import type { BotLanguage } from '../config.js';
+import { DAILY_MEMORY_SUMMARY_MAX_LENGTH } from './memory.js';
 
 export function getDailySystemPrompt(language: BotLanguage): string {
   if (language === 'ru') return DAILY_SYSTEM_PROMPT_RU;
@@ -28,7 +29,8 @@ const DAILY_SYSTEM_PROMPT_RU = `Ты — психолог-помощник, ра
     "mood": число от 0 до 10 или null,
     "anxiety": число от 0 до 10 или null,
     "stress": число от 0 до 10 или null,
-    "productivity": число от 0 до 10 или null
+    "productivity": число от 0 до 10 или null,
+    "routine": число от 0 до 10 или null
   },
   "daily_memory_summary": "краткая внутренняя сводка дня для будущего контекста",
   "analysis_text": "свободный текст анализа для пользователя",
@@ -77,12 +79,13 @@ const DAILY_SYSTEM_PROMPT_RU = `Ты — психолог-помощник, ра
 - anxiety: уровень тревоги (0 = нет тревоги, 10 = паника)
 - stress: уровень стресса/напряжения (0 = нет стресса, 10 = максимально перегружен)
 - productivity: продуктивность (0 = ничего не сделал, 10 = всё успел и даже больше)
+- routine: насколько выполнены ежедневные рутинные дела и привычки — прогулка, зарядка, упражнения, бытовые задачи (0 = ничего из рутины не сделал, 10 = выполнил всю запланированную рутину)
 Если пользователь сказал что-то вроде "настроение на 7" или "тревога зашкаливает, на 9 из 10" — используй его оценку.
 Если пользователь описал состояние словами без числа (например "настроение отличное") — переведи в число.
 НЕ угадывай метрики по контексту. Если пользователь не упоминал конкретную метрику — ставь null.
 
 Поле "daily_memory_summary": это внутренняя краткосрочная память о ДНЕ, не ответ пользователю.
-- 1-3 коротких предложения, максимум 500 символов
+- 3-6 предложений, до ${DAILY_MEMORY_SUMMARY_MAX_LENGTH} символов; в насыщенный день пиши подробнее, но без воды
 - Если есть предыдущие записи за сегодня — обнови сводку всего дня с учётом текущей записи и предыдущих записей за сегодня
 - Если это первая запись дня — кратко опиши только текущую запись как день на данный момент
 - Сохраняй конкретные события, поездки, работу, отношения, заметное настроение, тревогу/стресс, триггеры, wins и важные паттерны мышления
@@ -119,7 +122,8 @@ You MUST return a JSON object in a \`\`\`json ... \`\`\` block with this structu
     "mood": number 0-10 or null,
     "anxiety": number 0-10 or null,
     "stress": number 0-10 or null,
-    "productivity": number 0-10 or null
+    "productivity": number 0-10 or null,
+    "routine": number 0-10 or null
   },
   "daily_memory_summary": "short internal day summary for future context",
   "analysis_text": "free-form analysis text for the user",
@@ -168,12 +172,13 @@ The "metrics" field: fill in ONLY if the user explicitly assessed their own stat
 - anxiety: anxiety level (0 = no anxiety, 10 = panic)
 - stress: stress/tension level (0 = no stress, 10 = maximally overwhelmed)
 - productivity: productivity (0 = did nothing, 10 = accomplished everything and more)
+- routine: how well the daily routine and habits were done — a walk, a warm-up, exercise, chores (0 = did none of the routine, 10 = completed the whole planned routine)
 If the user said something like "mood is 7" or "anxiety is through the roof, 9 out of 10" — use their rating.
 If the user described a state in words without a number (e.g. "mood is great") — translate to a number.
 Do NOT guess metrics from context. If the user did not mention a specific metric — set it to null.
 
 The "daily_memory_summary" field is internal short-term memory about the DAY, not the user-facing answer.
-- 1-3 short sentences, maximum 500 characters
+- 3-6 sentences, up to ${DAILY_MEMORY_SUMMARY_MAX_LENGTH} characters; on an eventful day write more detail, but no filler
 - If there are earlier entries from today, update a whole-day summary using the current entry and earlier entries from today
 - If this is the first entry of the day, briefly summarize only the current entry as the day so far
 - Preserve concrete events, travel, work, relationships, notable mood, anxiety/stress, triggers, wins, and important thinking patterns

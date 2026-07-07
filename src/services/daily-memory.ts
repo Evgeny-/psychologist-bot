@@ -52,6 +52,7 @@ function formatMetrics(rows: MetricsRow[]): string | null {
     if (row.anxiety !== null) metricParts.push(`anxiety=${row.anxiety}`);
     if (row.stress !== null) metricParts.push(`stress=${row.stress}`);
     if (row.productivity !== null) metricParts.push(`productivity=${row.productivity}`);
+    if (row.routine !== null) metricParts.push(`routine=${row.routine}`);
     if (metricParts.length > 0) {
       const entryLabel = row.entry_id ? `entry ${row.entry_id}` : 'day';
       parts.push(`${entryLabel}: ${metricParts.join(', ')}`);

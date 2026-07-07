@@ -5,6 +5,7 @@ export interface ParsedMetrics {
   anxiety?: number;
   stress?: number;
   productivity?: number;
+  routine?: number;
   custom: Record<string, number>;
 }
 
@@ -18,6 +19,7 @@ export function parseMetrics(text: string): ParsedMetrics {
   result.anxiety = findMetricValue(lower, patterns.anxiety);
   result.stress = findMetricValue(lower, patterns.stress);
   result.productivity = findMetricValue(lower, patterns.productivity);
+  result.routine = findMetricValue(lower, patterns.routine);
 
   return result;
 }
@@ -37,5 +39,5 @@ function findMetricValue(text: string, aliases: readonly string[]): number | und
 }
 
 export function hasAnyMetrics(metrics: ParsedMetrics): boolean {
-  return metrics.mood !== undefined || metrics.anxiety !== undefined || metrics.stress !== undefined || metrics.productivity !== undefined;
+  return metrics.mood !== undefined || metrics.anxiety !== undefined || metrics.stress !== undefined || metrics.productivity !== undefined || metrics.routine !== undefined;
 }

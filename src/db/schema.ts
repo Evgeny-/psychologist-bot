@@ -41,6 +41,7 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
   // Legacy columns such as self_esteem and energy may exist in old DBs, but new code no longer writes them.
   addMetricColumnIfMissing('productivity', 'INTEGER CHECK(productivity BETWEEN 0 AND 10)');
   addMetricColumnIfMissing('stress', 'INTEGER CHECK(stress BETWEEN 0 AND 10)');
+  addMetricColumnIfMissing('routine', 'INTEGER CHECK(routine BETWEEN 0 AND 10)');
 
   // Migration: add emotions_json, triggers_json, wins_json columns to analyses
   const hasEmotions = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('analyses') WHERE name='emotions_json'").get() as { cnt: number };
@@ -97,6 +98,7 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
       anxiety INTEGER CHECK(anxiety BETWEEN 0 AND 10),
       stress INTEGER CHECK(stress BETWEEN 0 AND 10),
       productivity INTEGER CHECK(productivity BETWEEN 0 AND 10),
+      routine INTEGER CHECK(routine BETWEEN 0 AND 10),
       custom_json TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );

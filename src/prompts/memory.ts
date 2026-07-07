@@ -1,8 +1,8 @@
 import type { BotLanguage } from '../config.js';
 
-export const MEMORY_MAX_LENGTH = 3000;
+export const MEMORY_MAX_LENGTH = 6000;
 export const RECENT_DAILY_MEMORY_DAYS = 10;
-export const DAILY_MEMORY_SUMMARY_MAX_LENGTH = 500;
+export const DAILY_MEMORY_SUMMARY_MAX_LENGTH = 1000;
 
 export function getMemoryUpdatePrompt(language: BotLanguage): string {
   if (language === 'ru') return MEMORY_UPDATE_PROMPT_RU;
@@ -26,7 +26,7 @@ const MEMORY_UPDATE_PROMPT_RU = `Ты управляешь долгосрочн�
 5. Если ничего существенно нового нет — верни текущую память без изменений или с минимальными правками.
 6. Обновляй существующие факты, если они изменились (например, сменил работу).
 7. Удаляй информацию, которая стала неактуальной.
-8. Максимальная длина: ${MEMORY_MAX_LENGTH} символов. Будь лаконичен.
+8. Максимальная длина: ${MEMORY_MAX_LENGTH} символов. Можно вести развёрнутый портрет с нюансами, но без воды и повторов.
 
 Формат ответа: верни ТОЛЬКО текст обновлённой памяти, без комментариев, пояснений или обёрток.`;
 
@@ -42,7 +42,7 @@ Rules:
 5. If nothing substantially new emerged — return current memory unchanged or with minimal edits.
 6. Update existing facts if they changed (e.g., changed jobs).
 7. Remove information that became outdated.
-8. Maximum length: ${MEMORY_MAX_LENGTH} characters. Be concise.
+8. Maximum length: ${MEMORY_MAX_LENGTH} characters. A fuller, more nuanced portrait is fine, but avoid filler and repetition.
 
 Response format: return ONLY the updated memory text, without comments, explanations, or wrappers.`;
 
@@ -57,7 +57,7 @@ const DAILY_MEMORY_SUMMARY_PROMPT_RU = `Ты создаёшь краткосро
 
 Правила для "summary":
 - максимум ${DAILY_MEMORY_SUMMARY_MAX_LENGTH} символов;
-- 1-3 коротких предложения;
+- 3-6 предложений; в насыщенный день можно подробнее, но без воды;
 - пиши о конкретном дне, в прошедшем времени;
 - сохраняй только полезное для будущих ответов: важные события, поездки, работу, отношения, заметное настроение, тревогу, триггеры, wins, повторяющиеся паттерны мышления;
 - включай метрики только если они есть и помогают понять день;
@@ -76,7 +76,7 @@ Return ONLY a JSON object:
 
 Rules for "summary":
 - maximum ${DAILY_MEMORY_SUMMARY_MAX_LENGTH} characters;
-- 1-3 short sentences;
+- 3-6 sentences; more detail on an eventful day, but no filler;
 - write about the specific day in past tense;
 - keep only what is useful for future replies: important events, travel, work, relationships, notable mood, anxiety, triggers, wins, repeated thinking patterns;
 - include metrics only if present and useful for understanding the day;

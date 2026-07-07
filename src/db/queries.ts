@@ -38,6 +38,7 @@ export interface MetricsRow {
   anxiety: number | null;
   stress: number | null;
   productivity: number | null;
+  routine: number | null;
   custom_json: string | null;
   created_at: string;
 }
@@ -149,11 +150,12 @@ export class Queries {
     anxiety?: number;
     stress?: number;
     productivity?: number;
+    routine?: number;
     custom_json?: string;
   }): number {
     const stmt = this.db.prepare(`
-      INSERT INTO metrics (entry_id, date, mood, anxiety, stress, productivity, custom_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO metrics (entry_id, date, mood, anxiety, stress, productivity, routine, custom_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       metrics.entry_id ?? null,
@@ -162,6 +164,7 @@ export class Queries {
       metrics.anxiety ?? null,
       metrics.stress ?? null,
       metrics.productivity ?? null,
+      metrics.routine ?? null,
       metrics.custom_json ?? null,
     );
     return result.lastInsertRowid as number;
@@ -352,11 +355,11 @@ export class Queries {
   }
 
   /** Average metrics for a date range */
-  getAverageMetrics(start: string, end: string): { avgMood: number | null; avgAnxiety: number | null; avgStress: number | null; avgProductivity: number | null; count: number } {
+  getAverageMetrics(start: string, end: string): { avgMood: number | null; avgAnxiety: number | null; avgStress: number | null; avgProductivity: number | null; avgRoutine: number | null; count: number } {
     const row = this.db.prepare(`
-      SELECT AVG(mood) as avgMood, AVG(anxiety) as avgAnxiety, AVG(stress) as avgStress, AVG(productivity) as avgProductivity, COUNT(*) as count
-      FROM metrics WHERE date >= ? AND date <= ? AND (mood IS NOT NULL OR anxiety IS NOT NULL OR stress IS NOT NULL OR productivity IS NOT NULL)
-    `).get(start, end) as { avgMood: number | null; avgAnxiety: number | null; avgStress: number | null; avgProductivity: number | null; count: number };
+      SELECT AVG(mood) as avgMood, AVG(anxiety) as avgAnxiety, AVG(stress) as avgStress, AVG(productivity) as avgProductivity, AVG(routine) as avgRoutine, COUNT(*) as count
+      FROM metrics WHERE date >= ? AND date <= ? AND (mood IS NOT NULL OR anxiety IS NOT NULL OR stress IS NOT NULL OR productivity IS NOT NULL OR routine IS NOT NULL)
+    `).get(start, end) as { avgMood: number | null; avgAnxiety: number | null; avgStress: number | null; avgProductivity: number | null; avgRoutine: number | null; count: number };
     return row;
   }
 
@@ -370,11 +373,12 @@ export class Queries {
     anxiety: number | null;
     stress: number | null;
     productivity: number | null;
+    routine: number | null;
   }> {
     let sql = `
       SELECT e.date, e.local_time, e.type,
         COALESCE(e.transcript, e.raw_text) as text,
-        m.mood, m.anxiety, m.stress, m.productivity
+        m.mood, m.anxiety, m.stress, m.productivity, m.routine
       FROM entries e
       LEFT JOIN metrics m ON m.entry_id = e.id
     `;
@@ -386,7 +390,7 @@ export class Queries {
     sql += ' ORDER BY e.date ASC, e.created_at ASC';
     return this.db.prepare(sql).all(...params) as Array<{
       date: string; local_time: string | null; type: string; text: string | null;
-      mood: number | null; anxiety: number | null; stress: number | null; productivity: number | null;
+      mood: number | null; anxiety: number | null; stress: number | null; productivity: number | null; routine: number | null;
     }>;
   }
 

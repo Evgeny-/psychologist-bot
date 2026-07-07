@@ -25,6 +25,7 @@ interface AnalysisResult {
     anxiety?: number | null;
     stress?: number | null;
     productivity?: number | null;
+    routine?: number | null;
   };
   daily_memory_summary?: string;
   analysis_text?: string;
@@ -36,6 +37,7 @@ export interface ExtractedMetrics {
   anxiety?: number;
   stress?: number;
   productivity?: number;
+  routine?: number;
 }
 
 interface ParsedAnalysisResponse {
@@ -72,6 +74,7 @@ function extractMetrics(parsed: AnalysisResult | null): ExtractedMetrics {
   if (typeof m.anxiety === 'number' && m.anxiety >= 0 && m.anxiety <= 10) result.anxiety = m.anxiety;
   if (typeof m.stress === 'number' && m.stress >= 0 && m.stress <= 10) result.stress = m.stress;
   if (typeof m.productivity === 'number' && m.productivity >= 0 && m.productivity <= 10) result.productivity = m.productivity;
+  if (typeof m.routine === 'number' && m.routine >= 0 && m.routine <= 10) result.routine = m.routine;
   return result;
 }
 
@@ -136,6 +139,7 @@ function formatMetricsLine(metrics: ExtractedMetrics): string {
   if (metrics.anxiety !== undefined) parts.push(`тревога: ${metrics.anxiety}`);
   if (metrics.stress !== undefined) parts.push(`стресс: ${metrics.stress}`);
   if (metrics.productivity !== undefined) parts.push(`продуктивность: ${metrics.productivity}`);
+  if (metrics.routine !== undefined) parts.push(`рутина: ${metrics.routine}`);
   if (parts.length === 0) return '';
   return `\n<blockquote>📊 ${parts.join(' | ')}</blockquote>`;
 }

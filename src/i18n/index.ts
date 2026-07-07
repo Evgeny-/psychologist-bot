@@ -19,6 +19,8 @@ export interface Strings {
   monthlyReportTitle: string;
   morningBriefTitle: string;
   morningBriefNoEntry: string;
+  chartTitle: string;
+  chartCaption: string;
   metricsAsk: string;
   streakInfo: string;
   statsHeader: string;
@@ -28,14 +30,23 @@ export interface Strings {
   statsAvgAnxiety: string;
   statsAvgStress: string;
   statsAvgProductivity: string;
+  statsAvgRoutine: string;
   statsNoMetrics: string;
   statsMetricsForDays: string;
   exportEmpty: string;
+  metricNames: {
+    mood: string;
+    anxiety: string;
+    stress: string;
+    productivity: string;
+    routine: string;
+  };
   metricsPatterns: {
     mood: readonly string[];
     anxiety: readonly string[];
     stress: readonly string[];
     productivity: readonly string[];
+    routine: readonly string[];
   };
 }
 

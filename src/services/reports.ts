@@ -9,6 +9,7 @@ import { queries } from '../db/index.js';
 import { sendSplitMessages, sendRawHtmlMessages, markdownToHtml, postChannelHeader } from '../utils/telegram.js';
 import { formatDateLocal, shiftLocalDate, todayLocal } from '../utils/date.js';
 import { getMemoryUpdatePrompt, MEMORY_MAX_LENGTH } from '../prompts/memory.js';
+import { sendMetricsChart } from './charts.js';
 import { logError, logInfo, logWarn } from '../utils/logger.js';
 
 // ~400k chars ≈ 100k tokens — keeps us under Sonnet's 200k limit with room for system prompt + response
@@ -76,6 +77,7 @@ function buildDaySummaries(start: string, end: string): DaySummary[] {
       if (dayMetrics.anxiety !== null) m.push(`anxiety=${dayMetrics.anxiety}`);
       if (dayMetrics.stress !== null) m.push(`stress=${dayMetrics.stress}`);
       if (dayMetrics.productivity !== null) m.push(`productivity=${dayMetrics.productivity}`);
+      if (dayMetrics.routine !== null) m.push(`routine=${dayMetrics.routine}`);
       if (m.length) metricsStr = m.join(', ');
     }
 
@@ -274,6 +276,9 @@ async function runWeeklyReport(
   // Post short header to channel, get comment target for full content
   const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `${title}\n\n#bot`);
 
+  // Attach a 30-day metrics chart under the header (never blocks the text report)
+  await sendMetricsChart(api, target, endStr);
+
   const providers = config.compareMode ? createAllLLMProviders() : [createLLMProvider()];
 
   for (const provider of providers) {
@@ -371,6 +376,9 @@ async function runMonthlyReport(
 
   // Post short header to channel, get comment target for full content
   const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `${title}\n\n#bot`);
+
+  // Attach a 30-day metrics chart under the header (never blocks the text report)
+  await sendMetricsChart(api, target, endStr);
 
   const providers = config.compareMode ? createAllLLMProviders() : [createLLMProvider()];
 

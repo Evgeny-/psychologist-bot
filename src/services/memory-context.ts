@@ -22,12 +22,14 @@ function formatMetricsForDate(metrics: MetricsRow[]): string | null {
   const anxiety = average(metrics.map((m) => m.anxiety).filter((v): v is number => v !== null));
   const stress = average(metrics.map((m) => m.stress).filter((v): v is number => v !== null));
   const productivity = average(metrics.map((m) => m.productivity).filter((v): v is number => v !== null));
+  const routine = average(metrics.map((m) => m.routine).filter((v): v is number => v !== null));
 
   const parts: string[] = [];
   if (mood !== null) parts.push(config.language === 'ru' ? `настроение ${formatMetricValue(mood)}` : `mood ${formatMetricValue(mood)}`);
   if (anxiety !== null) parts.push(config.language === 'ru' ? `тревога ${formatMetricValue(anxiety)}` : `anxiety ${formatMetricValue(anxiety)}`);
   if (stress !== null) parts.push(config.language === 'ru' ? `стресс ${formatMetricValue(stress)}` : `stress ${formatMetricValue(stress)}`);
   if (productivity !== null) parts.push(config.language === 'ru' ? `продуктивность ${formatMetricValue(productivity)}` : `productivity ${formatMetricValue(productivity)}`);
+  if (routine !== null) parts.push(config.language === 'ru' ? `рутина ${formatMetricValue(routine)}` : `routine ${formatMetricValue(routine)}`);
   return parts.length > 0 ? parts.join(', ') : null;
 }
 

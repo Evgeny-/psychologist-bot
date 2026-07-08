@@ -14,7 +14,6 @@ import { parseJsonResponse, stripJsonBlock } from '../utils/json.js';
 import { getMemoryUpdatePrompt, MEMORY_MAX_LENGTH } from '../prompts/memory.js';
 import { sendMetricsChart } from './charts.js';
 import { getDistortionCounts, getDistortionCountsByRange } from './patterns.js';
-import { sendAudioReply } from './audio-replies.js';
 import { logError, logInfo, logWarn } from '../utils/logger.js';
 
 // ~400k chars ≈ 100k tokens — keeps us under Sonnet's 200k limit with room for system prompt + response
@@ -769,13 +768,6 @@ async function runMorningBrief(
   const body = markdownToHtml(outgoing);
   await sendRawHtmlMessages(api, chatId, `<blockquote>${title}${costInfo}</blockquote>\n\n${body}\n\n#bot`);
 
-  // P2.12: optionally also deliver the morning focus as a voice message.
-  if (!shouldSkip && config.morningBriefAudio && outgoing.trim()) {
-    await sendAudioReply(api, chatId, outgoing).catch((err) => {
-      logWarn('report.morning.audio_failed', { reportType, today, reason: err instanceof Error ? err.message : String(err) });
-    });
-  }
-
   logInfo('report.morning.complete', {
     reportType,
     today,
@@ -785,7 +777,6 @@ async function runMorningBrief(
     elapsedMs: Date.now() - start,
     outputChars: outgoing.length,
     skip: shouldSkip,
-    audio: !shouldSkip && config.morningBriefAudio,
     groundingCount: parsed?.grounding?.length,
     inputTokens: result.usage?.inputTokens,
     outputTokens: result.usage?.outputTokens,

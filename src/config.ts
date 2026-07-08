@@ -44,8 +44,6 @@ export const config = {
 
   compareMode: process.env.COMPARE_MODE === 'true',
 
-  morningBriefAudio: process.env.MORNING_BRIEF_AUDIO === 'true',
-
   language: (process.env.BOT_LANGUAGE || 'ru') as BotLanguage,
 
   timezone: process.env.BOT_TIMEZONE || 'Europe/Moscow',

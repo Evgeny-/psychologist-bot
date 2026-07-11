@@ -3,7 +3,8 @@ import type Database from 'better-sqlite3';
 import { initDb } from './schema.js';
 import { Queries } from './queries.js';
 
-const DB_PATH = 'data/cbt-bot.db';
+// Overridable for offline tooling (prompt-eval harness runs against a DB dump).
+const DB_PATH = process.env.DB_PATH || 'data/cbt-bot.db';
 
 mkdirSync('data', { recursive: true });
 

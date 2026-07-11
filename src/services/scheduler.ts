@@ -5,6 +5,7 @@ import { queries } from '../db/index.js';
 import { t } from '../i18n/index.js';
 import { todayLocal } from '../utils/date.js';
 import { generateWeeklyReport, generateMonthlyReport, generateMorningBrief } from './reports.js';
+import { consolidateDailyMemoryForDate } from './daily-memory.js';
 import { logError, logInfo } from '../utils/logger.js';
 
 function daysSinceLastEntry(): number {
@@ -56,6 +57,18 @@ export function startScheduler(api: Api): void {
       }
     }, cronOptions);
   }
+
+  // Nightly memory consolidation at 23:55: rebuild today's day-summary so it also
+  // absorbs the thread conversations (the deepest work often happens there).
+  cron.schedule('55 23 * * *', async () => {
+    try {
+      const today = todayLocal();
+      logInfo('scheduler.daily_memory_consolidation.tick', { today });
+      await consolidateDailyMemoryForDate(today);
+    } catch (err) {
+      logError('scheduler.daily_memory_consolidation.failed', err, {});
+    }
+  }, cronOptions);
 
   if (channelId) {
     // Morning brief: every day at 08:00 → channel

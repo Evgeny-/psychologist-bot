@@ -223,6 +223,23 @@ export async function showRecentDailyMemory(api: Api, chatId: number): Promise<v
   await sendRawHtmlMessages(api, target.chatId, `${markdownToHtml(body)}\n\n#bot`, target.replyToMessageId);
 }
 
+/**
+ * Nightly consolidation: regenerate today's day-summary so it includes the follow-up
+ * THREAD conversations (per-entry summaries are built from entries alone, and the
+ * deepest work often happens in threads). Called by the scheduler at end of day.
+ */
+export async function consolidateDailyMemoryForDate(date: string): Promise<void> {
+  const entries = queries.getEntriesByDateRange(date, date);
+  if (entries.length === 0) return;
+  const llm = createLLMProvider();
+  try {
+    const summary = await generateDailyMemoryForDate(date, llm);
+    logInfo('daily_memory.consolidate.complete', { date, saved: !!summary });
+  } catch (err) {
+    logError('daily_memory.consolidate.failed', err, { date });
+  }
+}
+
 export async function generateRecentDailyMemory(api: Api, chatId: number): Promise<void> {
   const { start, end } = getRecentMemoryRange();
   const entries = queries.getEntriesByDateRange(start, end);

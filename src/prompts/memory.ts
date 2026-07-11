@@ -1,8 +1,8 @@
 import type { BotLanguage } from '../config.js';
 
-export const MEMORY_MAX_LENGTH = 6000;
-export const RECENT_DAILY_MEMORY_DAYS = 10;
-export const DAILY_MEMORY_SUMMARY_MAX_LENGTH = 1000;
+export const MEMORY_MAX_LENGTH = 8000;
+export const RECENT_DAILY_MEMORY_DAYS = 14;
+export const DAILY_MEMORY_SUMMARY_MAX_LENGTH = 1200;
 
 export function getMemoryUpdatePrompt(language: BotLanguage): string {
   if (language === 'ru') return MEMORY_UPDATE_PROMPT_RU;

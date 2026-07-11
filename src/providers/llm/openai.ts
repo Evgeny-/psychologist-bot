@@ -3,8 +3,12 @@ import type { LLMProvider, LLMResult, ChatMessage } from './index.js';
 import { ApiBalanceError } from './claude.js';
 import { withRetry } from '../../utils/retry.js';
 
-// Pricing per million tokens
+// Pricing per million tokens (verified against the official pricing page, 2026-07)
 const OPENAI_PRICING: Record<string, { input: number; output: number }> = {
+  'gpt-5.6-sol': { input: 5.0, output: 30.0 },
+  'gpt-5.6-terra': { input: 2.5, output: 15.0 },
+  'gpt-5.6-luna': { input: 1.0, output: 6.0 },
+  'gpt-5.5': { input: 5.0, output: 30.0 },
   'gpt-5.4': { input: 3.0, output: 15.0 },
   'gpt-5.4-mini': { input: 0.75, output: 4.5 },
   'gpt-5.4-pro': { input: 15.0, output: 75.0 },
@@ -19,13 +23,15 @@ const OPENAI_PRICING: Record<string, { input: number; output: number }> = {
   'gpt-4o': { input: 2.5, output: 10.0 },
   'gpt-4o-mini': { input: 0.15, output: 0.6 },
 };
-const DEFAULT_OPENAI_PRICING = { input: 3.0, output: 15.0 };
+const DEFAULT_OPENAI_PRICING = { input: 5.0, output: 30.0 };
 const DEFAULT_MAX_COMPLETION_TOKENS = 4096;
 const REASONING_MAX_COMPLETION_TOKENS = 12000;
 
 function isReasoningModel(model: string): boolean {
   return /^(gpt-5|o[134])/.test(model);
 }
+
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high';
 
 export class OpenAILLM implements LLMProvider {
   private client: OpenAI;
@@ -34,6 +40,7 @@ export class OpenAILLM implements LLMProvider {
   constructor(
     apiKey: string,
     private model: string,
+    private reasoningEffort: ReasoningEffort = 'low',
   ) {
     this.client = new OpenAI({ apiKey });
   }
@@ -57,7 +64,7 @@ export class OpenAILLM implements LLMProvider {
         ],
         max_completion_tokens: reasoningModel ? REASONING_MAX_COMPLETION_TOKENS : DEFAULT_MAX_COMPLETION_TOKENS,
         ...(reasoningModel ? {
-          reasoning_effort: 'low' as const,
+          reasoning_effort: this.reasoningEffort,
           verbosity: 'medium' as const,
         } : {}),
       }));

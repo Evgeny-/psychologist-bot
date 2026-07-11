@@ -226,6 +226,10 @@ export class Queries {
     ).all(start, end) as EntryRow[];
   }
 
+  getEntryById(id: number): EntryRow | undefined {
+    return this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as EntryRow | undefined;
+  }
+
   getAnalysesByEntryIds(entryIds: number[]): AnalysisRow[] {
     if (entryIds.length === 0) return [];
     const placeholders = entryIds.map(() => '?').join(',');
@@ -332,7 +336,7 @@ export class Queries {
       SELECT e.transcript, e.raw_text,
         (SELECT a.analysis_text FROM analyses a WHERE a.entry_id = e.id ORDER BY a.created_at ASC LIMIT 1) as analysis_text
       FROM entries e
-      WHERE e.date = ? AND e.id != ?
+      WHERE e.date = ? AND e.id < ?
       ORDER BY e.created_at ASC
     `).all(date, excludeEntryId) as Array<{ transcript: string | null; raw_text: string | null; analysis_text: string | null }>;
   }

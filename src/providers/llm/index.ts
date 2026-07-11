@@ -31,7 +31,7 @@ export function createLLMProvider(): LLMProvider {
     case 'claude':
       return new ClaudeLLM(config.keys.anthropic, config.llm.claudeModel);
     case 'openai':
-      return new OpenAILLM(config.keys.openai, config.llm.openaiModel);
+      return new OpenAILLM(config.keys.openai, config.llm.openaiModel, config.llm.reasoningEffort);
     default:
       throw new Error(`Unknown LLM provider: ${config.llm.provider}`);
   }
@@ -43,7 +43,7 @@ export function createAllLLMProviders(): LLMProvider[] {
     providers.push(new ClaudeLLM(config.keys.anthropic, config.llm.claudeModel));
   }
   if (config.keys.openai) {
-    providers.push(new OpenAILLM(config.keys.openai, config.llm.openaiModel));
+    providers.push(new OpenAILLM(config.keys.openai, config.llm.openaiModel, config.llm.reasoningEffort));
   }
   return providers;
 }

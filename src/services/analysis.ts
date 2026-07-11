@@ -229,7 +229,9 @@ function buildYesterdayIntentionsBlock(yesterday: string): string | null {
   }
 }
 
-async function buildUserPromptWithContext(
+// Exported for the prompt-eval harness (scripts/eval-analysis.ts), which rebuilds
+// real prompts against a DB dump.
+export async function buildUserPromptWithContext(
   text: string,
   date: string,
   entryId: number,

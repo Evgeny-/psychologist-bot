@@ -30,6 +30,8 @@ export const config = {
     provider: (process.env.LLM_PROVIDER || 'claude') as LLMProviderType,
     openaiModel: process.env.OPENAI_LLM_MODEL || 'gpt-5.4-mini',
     claudeModel: process.env.CLAUDE_LLM_MODEL || 'claude-sonnet-4-6',
+    // How hard the OpenAI reasoning models think per reply (minimal|low|medium|high).
+    reasoningEffort: (process.env.LLM_REASONING_EFFORT || 'low') as 'minimal' | 'low' | 'medium' | 'high',
   },
 
   tts: {

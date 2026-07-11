@@ -1,6 +1,8 @@
 import OpenAI from 'openai';
 import { config } from '../config.js';
 import { queries } from '../db/index.js';
+import { RECENT_DAILY_MEMORY_DAYS } from '../prompts/memory.js';
+import { shiftLocalDate, todayLocal } from '../utils/date.js';
 import { logWarn } from '../utils/logger.js';
 
 export const EMBEDDING_MODEL = 'text-embedding-3-small';
@@ -73,7 +75,7 @@ interface SimilarOptions {
  * or null if nothing relevant / embeddings unavailable. Fully fail-soft.
  */
 export async function findSimilarEpisodes(text: string, opts: SimilarOptions = {}): Promise<string | null> {
-  const { excludeEntryId, topK = 3, minSimilarity = 0.35 } = opts;
+  const { excludeEntryId, topK = 4, minSimilarity = 0.35 } = opts;
   try {
     if (!config.keys.openai && !opts.queryVec) return null;
 
@@ -91,6 +93,10 @@ export async function findSimilarEpisodes(text: string, opts: SimilarOptions = {
       const self = queries.getEntrySnippetsByIds([excludeEntryId]);
       excludeDate = self[0]?.date ?? null;
     }
+    // The last RECENT_DAILY_MEMORY_DAYS are already present in the system prompt as
+    // daily summaries — retrieving them again would only duplicate context. This block
+    // exists to resurface OLDER, otherwise-forgotten episodes.
+    const recentCutoff = shiftLocalDate(excludeDate ?? todayLocal(), -RECENT_DAILY_MEMORY_DAYS);
 
     const scored: Array<{ entryId: number; sim: number }> = [];
     for (const row of embeddings) {
@@ -101,7 +107,9 @@ export async function findSimilarEpisodes(text: string, opts: SimilarOptions = {
     if (scored.length === 0) return null;
 
     scored.sort((a, b) => b.sim - a.sim);
-    const candidates = scored.slice(0, topK + 5);
+    // Extra headroom: the date filters below (same-day, recent window, per-date dedup)
+    // can discard a large share of the top-scored candidates.
+    const candidates = scored.slice(0, topK + 15);
     const snippets = queries.getEntrySnippetsByIds(candidates.map((c) => c.entryId));
     const snippetById = new Map(snippets.map((s) => [s.id, s]));
 
@@ -111,6 +119,8 @@ export async function findSimilarEpisodes(text: string, opts: SimilarOptions = {
       const snip = snippetById.get(c.entryId);
       if (!snip) continue;
       if (excludeDate && snip.date === excludeDate) continue;
+      if (snip.date >= recentCutoff) continue;
+      if (picked.some((p) => p.date === snip.date)) continue;
       picked.push({ date: snip.date, text: (snip.text ?? '').replace(/\s+/g, ' ').trim() });
     }
     if (picked.length === 0) return null;

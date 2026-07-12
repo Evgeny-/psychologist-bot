@@ -65,6 +65,18 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
     try { db.exec("ALTER TABLE experiment_events DROP COLUMN counted"); } catch { /* SQLite without DROP COLUMN support */ }
   }
 
+  // Migration: orbit theme tags on analyses (closed taxonomy, see src/prompts/orbits.ts)
+  const hasOrbitThemes = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('analyses') WHERE name='orbit_themes_json'").get() as { cnt: number };
+  if (hasOrbitThemes.cnt === 0) {
+    try { db.exec("ALTER TABLE analyses ADD COLUMN orbit_themes_json TEXT"); } catch { /* table may not exist yet */ }
+  }
+
+  // Migration: entry provenance — 'live' (telegram) vs 'archive' (imported past diaries)
+  const hasSource = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('entries') WHERE name='source'").get() as { cnt: number };
+  if (hasSource.cnt === 0) {
+    try { db.exec("ALTER TABLE entries ADD COLUMN source TEXT NOT NULL DEFAULT 'live'"); } catch { /* table may not exist yet */ }
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS entries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,6 +184,12 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
       model TEXT NOT NULL,
       vector BLOB NOT NULL,
       created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS orbit_meta (
+      theme_key TEXT PRIMARY KEY,
+      archive_note TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now'))
     );
 
     INSERT OR IGNORE INTO memory (id, content) VALUES (1, '');

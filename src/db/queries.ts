@@ -145,13 +145,14 @@ export class Queries {
     emotions_json?: string;
     triggers_json?: string;
     wins_json?: string;
+    orbit_themes_json?: string;
     gratitude_count?: number;
     llm_provider?: string;
     llm_model?: string;
   }): number {
     const stmt = this.db.prepare(`
-      INSERT INTO analyses (entry_id, analysis_text, sentiment, distortions_json, topics_json, action_items_json, emotions_json, triggers_json, wins_json, gratitude_count, llm_provider, llm_model)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO analyses (entry_id, analysis_text, sentiment, distortions_json, topics_json, action_items_json, emotions_json, triggers_json, wins_json, orbit_themes_json, gratitude_count, llm_provider, llm_model)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       analysis.entry_id,
@@ -163,6 +164,7 @@ export class Queries {
       analysis.emotions_json ?? null,
       analysis.triggers_json ?? null,
       analysis.wins_json ?? null,
+      analysis.orbit_themes_json ?? null,
       analysis.gratitude_count ?? 0,
       analysis.llm_provider ?? null,
       analysis.llm_model ?? null,
@@ -557,6 +559,34 @@ export class Queries {
         AND a.id IN (SELECT MIN(id) FROM analyses GROUP BY entry_id)
       ORDER BY a.created_at ASC
     `).all() as Array<{ id: number; entry_id: number; distortions_json: string; created_at: string }>;
+  }
+
+  /**
+   * Orbit-theme tags with entry dates since a given date (inclusive), one row per
+   * (entry, theme). First-saved analysis per entry — same compare-mode dedup as above.
+   * Feeds the "active orbits" context block: counting repeats deterministically.
+   */
+  getOrbitActivitySince(sinceDate: string, excludeEntryId?: number): Array<{ date: string; theme: string }> {
+    return this.db.prepare(`
+      SELECT e.date as date, je.value as theme
+      FROM analyses a
+      JOIN entries e ON e.id = a.entry_id, json_each(a.orbit_themes_json) je
+      WHERE e.date >= ? AND a.entry_id != ? AND a.orbit_themes_json IS NOT NULL AND a.orbit_themes_json != ''
+        AND a.id IN (SELECT MIN(id) FROM analyses GROUP BY entry_id)
+      ORDER BY e.date ASC
+    `).all(sinceDate, excludeEntryId ?? -1) as Array<{ date: string; theme: string }>;
+  }
+
+  /** Per-user historical notes for orbit themes (seeded manually, may be empty). */
+  getOrbitMetaNotes(): Map<string, string> {
+    const map = new Map<string, string>();
+    try {
+      const rows = this.db.prepare('SELECT theme_key, archive_note FROM orbit_meta').all() as Array<{ theme_key: string; archive_note: string }>;
+      for (const row of rows) {
+        if (row.archive_note?.trim()) map.set(row.theme_key, row.archive_note.trim());
+      }
+    } catch { /* table may not exist in older DBs */ }
+    return map;
   }
 
   /**

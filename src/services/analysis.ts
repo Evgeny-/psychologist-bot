@@ -9,6 +9,8 @@ import { queries } from '../db/index.js';
 import { sendAudioReply } from './audio-replies.js';
 import { buildSystemPromptWithUserMemory, sanitizeDailyMemorySummary } from './memory-context.js';
 import { buildPatternContextBlock } from './patterns.js';
+import { buildOrbitContextBlock } from './orbits.js';
+import { isOrbitThemeKey } from '../prompts/orbits.js';
 import { findSimilarEpisodes, embedEntryText, computeEntryVector, storeEntryVector } from './similarity.js';
 import { parseJsonResponse, stripJsonBlock } from '../utils/json.js';
 import { logError, logInfo, logWarn } from '../utils/logger.js';
@@ -37,6 +39,7 @@ interface AnalysisResult {
   gratitude?: string[];
   action_items?: string[];
   topics?: string[];
+  orbit_themes?: string[];
   gratitude_count?: number;
   metrics?: {
     mood?: number | null;
@@ -103,8 +106,15 @@ function parseAnalysisResponse(responseText: string): ParsedAnalysisResponse {
   };
 }
 
+/** Keep only known taxonomy keys (the model occasionally invents labels), max 3. */
+function sanitizeOrbitThemes(themes: unknown): string[] {
+  if (!Array.isArray(themes)) return [];
+  return themes.filter(isOrbitThemeKey).slice(0, 3);
+}
+
 function saveAnalysis(entryId: number, response: ParsedAnalysisResponse, llm: LLMProvider): ExtractedMetrics {
   const { parsed, freeform, metrics } = response;
+  const orbitThemes = sanitizeOrbitThemes(parsed?.orbit_themes);
 
   queries.insertAnalysis({
     entry_id: entryId,
@@ -116,6 +126,7 @@ function saveAnalysis(entryId: number, response: ParsedAnalysisResponse, llm: LL
     emotions_json: parsed?.emotions?.length ? JSON.stringify(parsed.emotions) : undefined,
     triggers_json: parsed?.triggers?.length ? JSON.stringify(parsed.triggers) : undefined,
     wins_json: parsed?.wins?.length ? JSON.stringify(parsed.wins) : undefined,
+    orbit_themes_json: orbitThemes.length ? JSON.stringify(orbitThemes) : undefined,
     gratitude_count: parsed?.gratitude_count ?? parsed?.gratitude?.length ?? 0,
     llm_provider: llm.providerName,
     llm_model: llm.modelName,
@@ -240,8 +251,19 @@ export async function buildUserPromptWithContext(
   const earlier = queries.getEarlierEntriesForDate(date, entryId);
   const yesterday = getYesterdayDate(date);
   const yesterdayEntries = queries.getEntriesByDateRange(yesterday, yesterday);
+  // ORBIT_CONTEXT=off lets the eval harness rebuild pre-orbit baseline prompts.
+  const orbitContextEnabled = process.env.ORBIT_CONTEXT !== 'off';
 
   const sections: string[] = [];
+
+  if (orbitContextEnabled) {
+    const entryTime = queries.getEntryById(entryId)?.local_time;
+    if (entryTime) {
+      sections.push(config.language === 'ru'
+        ? `[Время записи: ${entryTime}]`
+        : `[Entry time: ${entryTime}]`);
+    }
+  }
 
   const experimentBlock = buildActiveExperimentBlock();
   if (experimentBlock) sections.push(experimentBlock);
@@ -251,6 +273,11 @@ export async function buildUserPromptWithContext(
 
   const patternBlock = buildPatternContextBlock(config.language);
   if (patternBlock) sections.push(patternBlock);
+
+  if (orbitContextEnabled) {
+    const orbitBlock = buildOrbitContextBlock(date, entryId);
+    if (orbitBlock) sections.push(orbitBlock);
+  }
 
   const similarBlock = entryVector
     ? await withTimeout(

@@ -26,6 +26,8 @@ const MORNING_SYSTEM_PROMPT_RU = `Ты готовишь короткое утр�
 
 Приоритет источников: активный эксперимент и ВЧЕРАШНИЙ день — главные. Блок «позавчера» дан только как вторичный фон для связности: не строй фокус на позавчерашнем материале и не поднимай темы двухдневной давности, если вчера они не продолжились.
 
+ОТЛОЖЕННЫЙ ВЫВОД: если во вчерашнем вечернем ответе бота крупный вывод был отложен «до утра» (в контексте вчерашнего анализа есть фраза про правило 24 часов / «вернёмся утром») — сегодняшний фокус ИМЕННО он. Одной строкой напомни вчерашнюю мысль и спроси: «утром, на свежую голову — сколько ей веры, 0–100?». Это сильнее жанра дня и других источников.
+
 Поле "skip":
 - true, когда нет ничего конкретного, за что зацепиться (нет живого эксперимента, намерений, тренда, темы). Тогда "message" может быть null — бот просто не отправит сообщение.
 - false, когда есть хотя бы один конкретный фокус.
@@ -63,6 +65,8 @@ The "message" field:
 A "genre of the day" is provided in the context — it is a format HINT, not an obligation. If the genre has no real material — take another angle or set skip.
 
 Source priority: the active experiment and YESTERDAY are primary. The "day before yesterday" block is secondary background for continuity only: do not build the focus on two-day-old material and do not resurface themes from two days ago unless they continued yesterday.
+
+DEFERRED VERDICT: if in yesterday evening's bot reply a major conclusion was deferred "until morning" (yesterday's analysis in the context mentions the 24-hour rule / "we'll return to it in the morning") — today's focus is EXACTLY that. Recall yesterday's thought in one line and ask: "on a fresh head — how much do you believe it, 0–100?". This overrides the genre of the day and other sources.
 
 The "skip" field:
 - true when there's nothing concrete to grab onto (no live experiment, intentions, trend, or theme). Then "message" may be null — the bot simply won't send anything.

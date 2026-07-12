@@ -7,7 +7,7 @@ export const en = {
   processingVoice: 'Processing voice message...',
   processingText: 'Analyzing...',
   errorGeneric: 'An error occurred while processing the message. Will try again later.',
-  errorApiBalance: '⚠️ API error: possibly out of balance. Check the provider account.',
+  errorApiBalance: '⚠️ LLM provider error (balance, quota, or model access). Analysis not generated — see logs for details.',
   errorApiGeneric: '⚠️ API error ({provider}): {message}',
   reminderDay1: 'Hey! No entry today yet. How was your day?',
   reminderDay2plus: "It's been {days} days without entries. Even a short message is better than nothing.",

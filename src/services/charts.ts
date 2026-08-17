@@ -46,7 +46,7 @@ interface DayPoint {
   values: Record<MetricKey, number | null>;
 }
 
-/** Average all entries for a given day per metric. Days with no data stay null (rendered as a gap). */
+/** Average all entries for a given day per metric. Days with no data stay null and get no marker. */
 function averageByDate(rows: MetricsRow[], dates: string[]): DayPoint[] {
   const acc = new Map<string, Record<MetricKey, number[]>>();
   for (const date of dates) {
@@ -174,30 +174,26 @@ function buildSvg(points: DayPoint[], title: string): string {
       parts.push(`<text x="${(legendX + 20).toFixed(1)}" y="${opts.legendY}" font-size="14" fill="#374151">${esc(opts.weekendLabel)}</text>`);
     }
 
-    // Series: each contiguous run is a polyline (gaps break the line), plus a dot per real point.
+    // Series: connect every recorded value across the calendar timeline. Missing days have no
+    // marker, so they remain visible without interrupting the trend line.
     for (const key of keys) {
       const color = COLORS[key];
-      let segment: string[] = [];
-      const flush = (): void => {
-        if (segment.length >= 2) {
-          parts.push(
-            `<polyline fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="${segment.join(' ')}"/>`,
-          );
-        }
-        segment = [];
-      };
+      const linePoints: string[] = [];
+      const markers: string[] = [];
       for (let i = 0; i < n; i++) {
         const value = points[i].values[key];
-        if (value === null) {
-          flush();
-          continue;
-        }
+        if (value === null) continue;
         const x = xAt(i);
         const y = yAt(value);
-        segment.push(`${x.toFixed(1)},${y.toFixed(1)}`);
-        parts.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${color}"/>`);
+        linePoints.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+        markers.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${color}"/>`);
       }
-      flush();
+      if (linePoints.length >= 2) {
+        parts.push(
+          `<polyline fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="${linePoints.join(' ')}"/>`,
+        );
+      }
+      parts.push(...markers);
     }
 
     // Frame (left + bottom)

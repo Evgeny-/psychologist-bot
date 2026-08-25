@@ -14,6 +14,14 @@
 //   {{CHART_DISTORTIONS}}     top cognitive distortions, horizontal bars
 //   {{CHART_HOURS}}           entries by hour of day
 //   {{CHART_WINS}}            "wins" logged per week
+//   {{CHART_MONTHLY_MOOD}}    mean mood per month, bars (lowest month highlighted)
+//   {{CHART_ORBITS}}          recurring themes, ranked by how many distinct days each spans
+//   {{CHART_DISTORTION_TREND}} small multiples: top distortions per month, per 10 entries
+//
+// The last three read stats.json fields that compute-stats.mjs only emits when the
+// source database has them (orbits/orbitsByMonth, distortionsByMonth, monthlyVolume).
+// Each renders as an empty string when its data is missing, so a prose file may include
+// them unconditionally.
 //
 // Usage:
 //   node gen.mjs --stats export/stats.json --prose prose.html --out report.html [--title "..."]
@@ -360,6 +368,127 @@ function winsChart() {
 <div class="chart-scroll"><div class="chart-box" style="min-width:600px"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Победы по неделям">${g}</svg></div></div></figure>`;
 }
 
+
+// ---------- recurring themes ("orbits") ----------
+// Keys come from the bot's closed taxonomy; src/prompts/orbits.ts is the source of truth.
+// Unknown keys fall through to the raw key, so a taxonomy change degrades gracefully.
+const ORBIT_LABELS = {
+  work_recognition: 'Признание на работе',
+  partner_conflict: 'Конфликт и обида в паре',
+  trigger_anger: 'Гнев на бытовые триггеры',
+  life_passing: '«Жизнь проходит мимо»',
+  self_labeling: 'Ярлыки на себя',
+  health_worry: 'Здоровье и лечение',
+  money_anxiety: 'Деньги',
+  isolation: 'Одиночество и изоляция',
+  uncertainty_control: 'Неопределённость и контроль',
+};
+
+function orbitsChart() {
+  const data = (S.orbits || []).slice(0, 10);
+  if (!data.length) return '';
+  const max = data[0][1];
+  const totalDays = S.kpi?.totalDaysInRange || 1;
+  const W = 760, rowH = 32, barH = 19, L = 216, R = 78, T = 8;
+  const H = T + data.length * rowH + 8;
+  let g = '';
+  data.forEach(([key, n], i) => {
+    const name = ORBIT_LABELS[key] || key;
+    const yy = T + i * rowH + (rowH - barH) / 2;
+    const w = (n / max) * (W - L - R);
+    const pct = Math.round((n / totalDays) * 100);
+    g += `<text x="${L - 10}" y="${yy + barH / 2 + 4}" text-anchor="end" class="axis-label">${esc(name)}</text>`;
+    g += `<path d="${roundedRightRect(L, yy, w, barH, 4)}" fill="var(--accent)" opacity="${i < 3 ? 1 : 0.6}"><title>${esc(name)}: ${n} дней (${pct}% дней периода)</title></path>`;
+    g += `<text x="${(L + w + 8).toFixed(1)}" y="${yy + barH / 2 + 4}" class="val">${n} дн. · ${pct}%</text>`;
+  });
+  const months = Object.keys(S.orbitsByMonth || {}).sort();
+  const table = months.length
+    ? `<details class="tw"><summary>Данные: темы по месяцам (число записей)</summary><div class="tscroll"><table><thead><tr><th>Тема</th>` +
+      months.map((m) => `<th>${m.slice(5)}</th>`).join('') + `</tr></thead><tbody>` +
+      data.map(([key]) => `<tr><td>${esc(ORBIT_LABELS[key] || key)}</td>` +
+        months.map((m) => {
+          const row = (S.orbitsByMonth[m] || []).find((x) => x[0] === key);
+          return `<td>${row ? row[1] : '—'}</td>`;
+        }).join('') + `</tr>`).join('') +
+      `</tbody></table></div></details>`
+    : '';
+  return `<figure class="chart"><figcaption class="chart-title">Темы, к которым дневник возвращается · в скольких разных днях тема появлялась<span class="chart-note">всего ${totalDays} дней в периоде</span></figcaption>
+<div class="chart-scroll"><div class="chart-box" style="min-width:620px"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Повторяющиеся темы дневника">${g}</svg></div></div>${table}</figure>`;
+}
+
+// ---------- distortions over time ----------
+// Normalised per 10 entries of the month: raw counts would just re-draw how much was
+// written that month, which is the one thing this chart must not be about.
+function distortionTrendChart() {
+  const byMonth = S.distortionsByMonth || {};
+  const months = Object.keys(byMonth).sort();
+  const vol = S.monthlyVolume || {};
+  if (months.length < 2 || !Object.keys(vol).length) return '';
+  const keys = (S.topDistortions || []).slice(0, 6).map((d) => d[0]);
+  if (!keys.length) return '';
+  const val = (m, k) => {
+    const row = (byMonth[m] || []).find((x) => x[0] === k);
+    const n = row ? row[1] : 0;
+    return (n / (vol[m]?.entries || 1)) * 10;
+  };
+  const maxV = Math.max(...keys.flatMap((k) => months.map((m) => val(m, k))), 1);
+  const W = 240, H = 132, L = 26, R = 8, T = 14, B = 22;
+  const charts = keys.map((k) => {
+    const x0 = L, x1 = W - R, y0 = H - B, y1 = T;
+    const y = (v) => y0 - (v / maxV) * (y0 - y1);
+    const step = months.length > 1 ? (x1 - x0) / (months.length - 1) : 0;
+    let g = '';
+    g += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y0}" stroke="var(--baseline)" stroke-width="1"/>`;
+    g += `<line x1="${x0}" y1="${y(maxV)}" x2="${x1}" y2="${y(maxV)}" stroke="var(--grid)" stroke-width="1"/>`;
+    const pts = months.map((m, i) => [x0 + i * step, y(val(m, k))]);
+    g += `<path d="${pts.map((pt, i) => (i ? 'L' : 'M') + pt[0].toFixed(1) + ',' + pt[1].toFixed(1)).join('')}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>`;
+    pts.forEach((pt, i) => {
+      g += `<circle cx="${pt[0].toFixed(1)}" cy="${pt[1].toFixed(1)}" r="2.6" fill="var(--accent)"><title>${months[i]}: ${f1(val(months[i], k))} на 10 записей</title></circle>`;
+    });
+    months.forEach((m, i) => {
+      if (i !== 0 && i !== months.length - 1) return;
+      g += `<text x="${(x0 + i * step).toFixed(1)}" y="${y0 + 15}" class="tick s" text-anchor="${i === 0 ? 'start' : 'end'}">${RU_MONTHS_SHORT[Number(m.slice(5)) - 1]}</text>`;
+    });
+    g += `<text x="${x0 - 5}" y="${y(maxV) + 3.5}" text-anchor="end" class="tick s">${f1(maxV)}</text>`;
+    g += `<text x="${x0 - 5}" y="${y0 + 3.5}" text-anchor="end" class="tick s">0</text>`;
+    return `<figure class="chart mini"><figcaption class="chart-title">${esc(cap(k))}</figcaption><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(k)} по месяцам">${g}</svg></figure>`;
+  }).join('\n');
+  const table = `<details class="tw"><summary>Данные: искажения по месяцам, на 10 записей</summary><div class="tscroll"><table><thead><tr><th>Искажение</th>` +
+    months.map((m) => `<th>${m.slice(5)}</th>`).join('') + `</tr></thead><tbody>` +
+    keys.map((k) => `<tr><td>${esc(cap(k))}</td>` + months.map((m) => `<td>${f1(val(m, k))}</td>`).join('') + `</tr>`).join('') +
+    `</tbody></table></div></details>`;
+  return `<div class="mini-row">${charts}</div><p class="footnote">Нормировано на объём: эпизодов на каждые 10 записей месяца — иначе самый многословный месяц выглядел бы самым искажённым.</p>${table}`;
+}
+
+// ---------- mean mood per month ----------
+function monthlyMoodChart() {
+  const data = (S.monthly || []).filter((m) => m.mood != null);
+  if (!data.length) return '';
+  const W = 760, H = 230, L = 34, R = 12, T = 24, B = 46;
+  const x0 = L, x1 = W - R, y0 = H - B, y1 = T;
+  const y = (v) => y0 - (v / 10) * (y0 - y1);
+  const step = (x1 - x0) / data.length;
+  const bw = Math.min(74, step - 16);
+  const best = Math.max(...data.map((m) => m.mood));
+  const worst = Math.min(...data.map((m) => m.mood));
+  let g = '';
+  for (const v of [0, 2, 4, 6, 8, 10]) {
+    g += `<line x1="${x0}" y1="${y(v)}" x2="${x1}" y2="${y(v)}" stroke="var(--grid)" stroke-width="1"/>`;
+    g += `<text x="${x0 - 8}" y="${y(v) + 4}" text-anchor="end" class="tick">${v}</text>`;
+  }
+  data.forEach((m, i) => {
+    const xx = x0 + i * step + (step - bw) / 2;
+    const hh = y0 - y(m.mood);
+    g += `<path d="${roundedTopRect(xx, y(m.mood), bw, hh, 4)}" fill="${m.mood === worst ? 'var(--neg)' : 'var(--accent)'}" opacity="${m.mood === best ? 1 : 0.8}"><title>${m.month}: настроение ${f1(m.mood)}, дней ${m.days}</title></path>`;
+    g += `<text x="${(xx + bw / 2).toFixed(1)}" y="${(y(m.mood) - 7).toFixed(1)}" text-anchor="middle" class="val">${f1(m.mood)}</text>`;
+    g += `<text x="${(xx + bw / 2).toFixed(1)}" y="${y0 + 18}" text-anchor="middle" class="tick">${RU_MONTHS_SHORT[Number(m.month.slice(5)) - 1]}</text>`;
+    g += `<text x="${(xx + bw / 2).toFixed(1)}" y="${y0 + 34}" text-anchor="middle" class="tick s">${m.days} дн.</text>`;
+  });
+  g += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y0}" stroke="var(--baseline)" stroke-width="1"/>`;
+  return `<figure class="chart"><figcaption class="chart-title">Среднее настроение по месяцам, 0–10</figcaption>
+<div class="chart-scroll"><div class="chart-box" style="min-width:600px"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Среднее настроение по месяцам">${g}</svg></div></div></figure>`;
+}
+
 // ---------- CSS ----------
 // Design tokens: light + dark via prefers-color-scheme AND explicit
 // data-theme overrides (so an in-page theme toggle can win either way).
@@ -479,7 +608,10 @@ const body = prose
   .replace('{{CHART_SENTIMENT}}', sentimentChart())
   .replace('{{CHART_DISTORTIONS}}', distortionsChart())
   .replace('{{CHART_HOURS}}', hoursChart())
-  .replace('{{CHART_WINS}}', winsChart());
+  .replace('{{CHART_WINS}}', winsChart())
+  .replace('{{CHART_MONTHLY_MOOD}}', monthlyMoodChart())
+  .replace('{{CHART_ORBITS}}', orbitsChart())
+  .replace('{{CHART_DISTORTION_TREND}}', distortionTrendChart());
 
 const html = `<title>${esc(pageTitle)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">

@@ -17,7 +17,11 @@
 //     sentMonthly: { "YYYY-MM": { positive, neutral, negative, total } },
 //     topThemes: [[name, count], ...],       // from analyses.topics_json, all distinct values
 //     topEmotions: [[name, count], ...],     // from analyses.emotions_json
-//     topDistortions: [[name, count], ...],  // from analyses.distortions_json
+//     topDistortions: [[name, count], ...],  // from analyses.distortions_json (see note below)
+//     distortionsByMonth: { "YYYY-MM": [[name, count], ...] },
+//     orbits: [[theme_key, uniqueDays], ...],          // from analyses.orbit_themes_json
+//     orbitsByMonth: { "YYYY-MM": [[theme_key, entryCount], ...] },
+//     monthlyVolume: { "YYYY-MM": { entries, days, chars } },   // normalisation base for trends
 //     winsPerWeek: { "YYYY-MM-DD" (week-ending Sunday): count },
 //     winsTotalItems: n,
 //     weekdayCounts: [mon, tue, wed, thu, fri, sat, sun],   // entry counts
@@ -27,6 +31,15 @@
 //     dateRange: ["YYYY-MM-DD", "YYYY-MM-DD"],
 //     kpi: { totalWords, voiceMinutes, daysCovered, totalDaysInRange, bestStreak }
 //   }
+//
+// Distortions come in two shapes depending on when the bot wrote them: plain strings
+// (older rows) and objects {type, quote, reframe} (newer rows). Only `type` is tallied,
+// and near-duplicate wordings are folded together (see normaliseDistortion) - otherwise
+// 'Долженствование' and 'Долженствование ("надо было")' count as two separate patterns.
+//
+// Entries carrying `source` other than 'live' are imported archive material and are
+// EXCLUDED by default, so KPIs describe the live diary only. Pass --include-archive to
+// keep them.
 //
 // Note: the 7-day rolling average shown on charts is NOT precomputed here -
 // it is derived from `series` at render time inside report-template/gen.mjs.
@@ -53,6 +66,7 @@ const entriesPath = args.entries;
 const analysesPath = args.analyses;
 const metricsPath = args.metrics;
 const outPath = args.out || 'stats.json';
+const includeArchive = args['include-archive'] === true;
 
 if (!entriesPath || !analysesPath || !metricsPath) {
   console.error('Usage: node compute-stats.mjs --entries <entries.json> --analyses <analyses.json> --metrics <metrics.json> [--out <stats.json>]');
@@ -61,9 +75,16 @@ if (!entriesPath || !analysesPath || !metricsPath) {
 
 const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 
-const entries = readJson(entriesPath);
+const allEntries = readJson(entriesPath);
 const analyses = readJson(analysesPath);
-const metrics = readJson(metricsPath);
+const allMetrics = readJson(metricsPath);
+
+// Keep live diary entries only unless explicitly asked otherwise. Databases without the
+// `source` column simply have no archive rows, so the filter is a no-op there.
+const entries = includeArchive ? allEntries : allEntries.filter((e) => (e.source ?? 'live') === 'live');
+const liveEntryIds = new Set(entries.map((e) => e.id));
+const droppedEntries = allEntries.length - entries.length;
+const metrics = allMetrics.filter((m) => m.entry_id == null || liveEntryIds.has(m.entry_id));
 
 const METRIC_KEYS = ['mood', 'anxiety', 'stress', 'productivity', 'routine'];
 
@@ -121,6 +142,7 @@ const monthly = [...monthBuckets.keys()].sort().map((mo) => {
 // ---------- sentiment by month (needs entry date via join) ----------
 const sentMonthly = {};
 for (const a of analyses) {
+  // entryById only holds kept entries, so archive rows fall out here.
   const e = entryById.get(a.entry_id);
   if (!e || !a.sentiment) continue;
   const mo = monthOf(e.date);
@@ -141,21 +163,96 @@ function safeParseArray(jsonText) {
     return [];
   }
 }
-function tally(fieldName) {
+// Distortion entries are either "name" or {type, quote, reframe}; both reduce to a name.
+function itemName(raw) {
+  if (typeof raw === 'string') return raw;
+  if (raw && typeof raw === 'object' && typeof raw.type === 'string') return raw.type;
+  return null;
+}
+
+// Fold wording variants of the same pattern into one bucket. Everything after a bracket,
+// slash or dash is an example rather than a distinct pattern name.
+function normaliseDistortion(name) {
+  return name
+    .toLowerCase()
+    .replace(/[«»"„“”]/g, '')
+    .replace(/\s*[([].*$/, '')
+    .replace(/\s*[/—–-]\s.*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tally(fieldName, normalise = (v) => v.trim().toLowerCase(), rows = analyses) {
   const counts = new Map();
-  for (const a of analyses) {
+  for (const a of rows) {
     for (const raw of safeParseArray(a[fieldName])) {
-      if (typeof raw !== 'string') continue;
-      const key = raw.trim().toLowerCase();
+      const name = itemName(raw);
+      if (!name) continue;
+      const key = normalise(name);
       if (!key) continue;
       counts.set(key, (counts.get(key) || 0) + 1);
     }
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1]);
 }
-const topThemes = tally('topics_json');
-const topEmotions = tally('emotions_json');
-const topDistortions = tally('distortions_json');
+
+// Analyses belonging to filtered-out entries must not leak into the tallies.
+const liveAnalyses = analyses.filter((a) => entryById.has(a.entry_id));
+
+const topThemes = tally('topics_json', undefined, liveAnalyses);
+const topEmotions = tally('emotions_json', undefined, liveAnalyses);
+const topDistortions = tally('distortions_json', normaliseDistortion, liveAnalyses);
+
+// ---------- distortions and orbits over time ----------
+const analysesByMonth = new Map();
+for (const a of liveAnalyses) {
+  const e = entryById.get(a.entry_id);
+  if (!e) continue;
+  const mo = monthOf(e.date);
+  (analysesByMonth.get(mo) || analysesByMonth.set(mo, []).get(mo)).push(a);
+}
+const distortionsByMonth = {};
+const orbitsByMonth = {};
+for (const [mo, rows] of [...analysesByMonth.entries()].sort()) {
+  distortionsByMonth[mo] = tally('distortions_json', normaliseDistortion, rows);
+  const monthOrbits = tally('orbit_themes_json', undefined, rows);
+  if (monthOrbits.length) orbitsByMonth[mo] = monthOrbits;
+}
+
+// Orbits are counted in UNIQUE DAYS, not entries: a theme mentioned five times on one
+// day is one day of that theme, and days are what makes "it keeps coming back" legible.
+const orbitDays = new Map();
+for (const a of liveAnalyses) {
+  const e = entryById.get(a.entry_id);
+  if (!e) continue;
+  for (const raw of safeParseArray(a.orbit_themes_json)) {
+    const name = itemName(raw);
+    if (!name) continue;
+    const key = name.trim();
+    if (!key) continue;
+    (orbitDays.get(key) || orbitDays.set(key, new Set()).get(key)).add(e.date);
+  }
+}
+const orbits = [...orbitDays.entries()]
+  .map(([theme, days]) => [theme, days.size])
+  .sort((a, b) => b[1] - a[1]);
+
+// ---------- per-month volume (normalisation base for the trend charts) ----------
+const monthlyVolume = {};
+for (const e of entries) {
+  const mo = monthOf(e.date);
+  const bucket = (monthlyVolume[mo] ||= { entries: 0, days: new Set(), chars: 0 });
+  bucket.entries++;
+  bucket.days.add(e.date);
+  bucket.chars += (e.text || '').length;
+}
+for (const mo of Object.keys(monthlyVolume)) {
+  monthlyVolume[mo] = {
+    entries: monthlyVolume[mo].entries,
+    days: monthlyVolume[mo].days.size,
+    chars: monthlyVolume[mo].chars,
+  };
+}
 
 // ---------- wins per week (week key = Sunday, end of ISO week) ----------
 function isoWeekSunday(dateStr) {
@@ -166,7 +263,7 @@ function isoWeekSunday(dateStr) {
 }
 const winsPerWeek = {};
 let winsTotalItems = 0;
-for (const a of analyses) {
+for (const a of liveAnalyses) {
   const e = entryById.get(a.entry_id);
   if (!e) continue;
   const wins = safeParseArray(a.wins_json);
@@ -193,7 +290,7 @@ for (const e of entries) {
 }
 
 // ---------- gratitude ----------
-const gratTotal = analyses.reduce((sum, a) => sum + (a.gratitude_count || 0), 0);
+const gratTotal = liveAnalyses.reduce((sum, a) => sum + (a.gratitude_count || 0), 0);
 
 // ---------- KPIs ----------
 const entryDates = [...new Set(entries.map((e) => e.date))].sort();
@@ -230,6 +327,10 @@ const stats = {
   topThemes,
   topEmotions,
   topDistortions,
+  distortionsByMonth,
+  orbits,
+  orbitsByMonth,
+  monthlyVolume,
   winsPerWeek,
   winsTotalItems,
   weekdayCounts,
@@ -248,3 +349,6 @@ const stats = {
 
 fs.writeFileSync(outPath, JSON.stringify(stats, null, 1));
 console.log(`Wrote ${outPath} (${entries.length} entries, ${dates.length} metric-days, range ${dateRange[0]}..${dateRange[1]}).`);
+if (droppedEntries > 0) {
+  console.log(`  excluded ${droppedEntries} non-live (archive) entries; pass --include-archive to keep them.`);
+}

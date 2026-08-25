@@ -11,9 +11,13 @@
 #   ./export.sh <path-to-db> [output-dir]
 #
 # Output files (all JSON arrays, one row per array element):
-#   <output-dir>/entries.json       id, date, local_time, type, text, duration_seconds
+#   <output-dir>/entries.json       id, date, local_time, type, text, duration_seconds, source
+#                                    ("source" is emitted only when the column exists; rows with
+#                                     source != 'live' are imported archive material and are
+#                                     excluded from stats by default - see compute-stats.mjs)
 #   <output-dir>/analyses.json      entry_id, sentiment, emotions_json, triggers_json,
-#                                    wins_json, topics_json, distortions_json, gratitude_count
+#                                    wins_json, topics_json, distortions_json,
+#                                    orbit_themes_json, gratitude_count
 #   <output-dir>/metrics.json       entry_id, date, mood, anxiety, stress, productivity, routine
 #   <output-dir>/daily_memory.json  full table dump
 #   <output-dir>/memory.json        full table dump
@@ -37,17 +41,25 @@ mkdir -p "$OUT_DIR"
 
 echo "Exporting from $DB_PATH into $OUT_DIR/ ..."
 
+# `source` distinguishes live diary entries from imported archives. Older databases
+# predate the column, so probe for it instead of assuming.
+HAS_SOURCE=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM pragma_table_info('entries') WHERE name='source';")
+if [ "$HAS_SOURCE" = "1" ]; then SOURCE_COL=", source"; else SOURCE_COL=""; fi
+
 sqlite3 -json "$DB_PATH" "
   SELECT id, date, local_time, type,
          COALESCE(transcript, raw_text) AS text,
-         duration_seconds
+         duration_seconds$SOURCE_COL
   FROM entries
   ORDER BY date, id;
 " > "$OUT_DIR/entries.json"
 
+HAS_ORBITS=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM pragma_table_info('analyses') WHERE name='orbit_themes_json';")
+if [ "$HAS_ORBITS" = "1" ]; then ORBIT_COL=", orbit_themes_json"; else ORBIT_COL=""; fi
+
 sqlite3 -json "$DB_PATH" "
   SELECT entry_id, sentiment, emotions_json, triggers_json,
-         wins_json, topics_json, distortions_json, gratitude_count
+         wins_json, topics_json, distortions_json, gratitude_count$ORBIT_COL
   FROM analyses
   ORDER BY entry_id;
 " > "$OUT_DIR/analyses.json"

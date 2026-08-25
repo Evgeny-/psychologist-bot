@@ -35,16 +35,16 @@ export function createBot(): Bot {
     const fromId = ctx.from?.id;
     if (config.telegram.ownerUserId && fromId !== config.telegram.ownerUserId) {
       logWarn('bot.callback.foreign_user', { fromId, data: ctx.callbackQuery.data });
-      await ctx.answerCallbackQuery({ text: 'Это не твоя кнопка' }).catch(() => {});
+      await ctx.answerCallbackQuery({ text: t().toastForeignButton }).catch(() => {});
       return;
     }
 
     try {
-      let toast = 'Записал';
+      let toast = t().toastSaved;
       if (payload.kind === 'lbl') {
         const verdict = payload.value as 'yes' | 'no' | 'partly';
         queries.reviewLabel(Number(payload.ref), verdict);
-        toast = verdict === 'no' ? 'Снято' : 'Записал';
+        toast = verdict === 'no' ? t().toastDropped : t().toastSaved;
       } else if (payload.kind === 'ctr') {
         queries.resolveContract(payload.ref, { status: payload.value as 'done' | 'missed' });
       } else if (payload.kind === 'cred') {
@@ -72,7 +72,7 @@ export function createBot(): Bot {
       }).catch((err) => logWarn('bot.callback.edit_failed', { error: err }));
     } catch (err) {
       logError('bot.callback.failed', err, { data: ctx.callbackQuery.data });
-      await ctx.answerCallbackQuery({ text: 'Не получилось записать' }).catch(() => {});
+      await ctx.answerCallbackQuery({ text: t().toastSaveFailed }).catch(() => {});
     }
   });
 
@@ -422,11 +422,13 @@ async function handleNewEntry(ctx: Context): Promise<void> {
 async function handleVetoCommand(api: import('grammy').Api, chatId: number, text: string): Promise<void> {
   const arg = text.replace(/^\/veto(@\S+)?/, '').trim();
 
+  const strings = t();
+
   if (!arg) {
     const vetoes = queries.getVetoes();
     const body = vetoes.length === 0
-      ? 'Пока ничего не запрещено.\n\n<code>/veto текст</code> — запретить, <code>/veto -3</code> — снять запрет.'
-      : `<b>Никогда не поднимать</b>\n${vetoes.map((v) => `${v.id}. ${escapeHtml(v.text)}`).join('\n')}`;
+      ? `${strings.vetoEmpty}\n\n${strings.vetoHint}`
+      : `<b>${strings.vetoListHeader}</b>\n${vetoes.map((v) => `${v.id}. ${escapeHtml(v.text)}`).join('\n')}`;
     await sendRawHtmlMessages(api, chatId, body);
     return;
   }
@@ -435,13 +437,14 @@ async function handleVetoCommand(api: import('grammy').Api, chatId: number, text
   if (removal) {
     const id = Number(removal[1]);
     const removed = queries.deleteVeto(id);
-    await sendRawHtmlMessages(api, chatId, removed ? `Снял запрет ${id}.` : `Запрета ${id} нет.`);
+    const text = (removed ? strings.vetoRemoved : strings.vetoNotFound).replace('{id}', String(id));
+    await sendRawHtmlMessages(api, chatId, text);
     logInfo('bot.veto.removed', { id, removed });
     return;
   }
 
   const id = queries.insertVeto(arg);
-  await sendRawHtmlMessages(api, chatId, `Записал в чёрный список под номером ${id}. Больше не подниму.`);
+  await sendRawHtmlMessages(api, chatId, strings.vetoAdded.replace('{id}', String(id)));
   logInfo('bot.veto.added', { id });
 }
 

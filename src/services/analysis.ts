@@ -290,12 +290,13 @@ function formatUsage(usage?: LLMUsage): string {
 const escapeTg = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 function formatMetricsLine(metrics: ExtractedMetrics): string {
+  const short = t().metricShort;
   const parts: Array<[string, number]> = [];
-  if (metrics.mood !== undefined) parts.push(['наст', metrics.mood]);
-  if (metrics.anxiety !== undefined) parts.push(['трев', metrics.anxiety]);
-  if (metrics.stress !== undefined) parts.push(['стресс', metrics.stress]);
-  if (metrics.productivity !== undefined) parts.push(['прод', metrics.productivity]);
-  if (metrics.routine !== undefined) parts.push(['рут', metrics.routine]);
+  if (metrics.mood !== undefined) parts.push([short.mood, metrics.mood]);
+  if (metrics.anxiety !== undefined) parts.push([short.anxiety, metrics.anxiety]);
+  if (metrics.stress !== undefined) parts.push([short.stress, metrics.stress]);
+  if (metrics.productivity !== undefined) parts.push([short.productivity, metrics.productivity]);
+  if (metrics.routine !== undefined) parts.push([short.routine, metrics.routine]);
   if (parts.length === 0) return '';
   // Monospace so the numbers line up under each other across days.
   return `<pre>${parts.map(([k, v]) => `${k} ${v}`).join('   ')}</pre>`;
@@ -306,8 +307,9 @@ function formatCredit(parsed: AnalysisResult | null): string {
   const contract = parsed?.contract;
   if (contract?.done !== true) return '';
   const what = typeof contract.named === 'string' ? contract.named.trim() : '';
-  if (!what) return '<b>✓ Засчитано</b>';
-  return `<b>✓ Засчитано:</b> ${escapeTg(what)}`;
+  const label = t().creditedLabel;
+  if (!what) return `<b>${label}</b>`;
+  return `<b>${label}:</b> ${escapeTg(what)}`;
 }
 
 /**
@@ -330,7 +332,7 @@ function formatDistortions(parsed: AnalysisResult | null): string {
       return `<blockquote>${escapeTg(d.quote.trim())}</blockquote>${type}\n${escapeTg(d.reframe.trim())}`;
     })
     .join('\n\n');
-  return `<b>Мысли дня — ${items.length}</b>\n${body}`;
+  return `<b>${t().thoughtsOfDayHeader} — ${items.length}</b>\n${body}`;
 }
 
 /**
@@ -346,7 +348,7 @@ function buildContractAsk(date: string): { text: string; keyboard: InlineKeyboar
   try {
     const contract = queries.getContract(date);
     if (!contract || contract.status !== 'open') return null;
-    return { text: 'Живой контакт сегодня был?', keyboard: contractKeyboard(date) };
+    return { text: t().contractAsk, keyboard: contractKeyboard(date) };
   } catch (err) {
     logWarn('analysis.contract_ask_failed', { date, reason: err instanceof Error ? err.message : String(err) });
     return null;
@@ -520,7 +522,7 @@ export async function buildUserPromptWithContext(
   let yesterdayBlock: string | null = null;
   if (yesterdayEntries.length > 0) {
     const yesterdayTranscripts = yesterdayEntries
-      .map((e, i) => `[Вчерашняя запись ${i + 1}]\n${e.transcript || e.raw_text || ''}`)
+      .map((e, i) => `[${config.language === 'ru' ? 'Вчерашняя запись' : 'Yesterday entry'} ${i + 1}]\n${e.transcript || e.raw_text || ''}`)
       .join('\n\n---\n\n');
     yesterdayBlock = config.language === 'ru'
       ? `--- КОНТЕКСТ: записи ЗА ВЧЕРА (только для фоновой связи мыслей, НЕ анализируй их, НЕ упоминай явно) ---\n\n${yesterdayTranscripts}\n\n--- КОНЕЦ ВЧЕРАШНЕГО КОНТЕКСТА ---`
@@ -567,7 +569,7 @@ export async function analyzeEntry(
 ): Promise<ExtractedMetrics> {
   const entryDate = date || todayLocal();
   const systemPrompt = buildSystemPromptWithUserMemory(
-    getDailySystemPrompt(),
+    getDailySystemPrompt(config.language),
     entryDate,
     { includeReferenceDate: false },
   );

@@ -63,7 +63,7 @@ const PRICING: Record<string, { input: number; output: number }> = {
 
 const basePrompt = arg('system-file')
   ? fs.readFileSync(arg('system-file')!, 'utf8')
-  : getDailySystemPrompt();
+  : getDailySystemPrompt(config.language);
 
 fs.mkdirSync(outDir, { recursive: true });
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;

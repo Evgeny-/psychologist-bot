@@ -1,4 +1,5 @@
 import { InlineKeyboard } from 'grammy';
+import { t } from '../i18n/index.js';
 
 /**
  * Inline-button plumbing.
@@ -40,35 +41,29 @@ export function decodeCallback(data: string): CallbackPayload | null {
 
 /** Yesterday evening's label, read back this morning. */
 export function labelKeyboard(labelId: number): InlineKeyboard {
+  const s = t();
   return new InlineKeyboard()
-    .text('Всё ещё так', encodeCallback({ kind: 'lbl', ref: String(labelId), value: 'yes' }))
-    .text('Уже нет', encodeCallback({ kind: 'lbl', ref: String(labelId), value: 'no' }))
-    .text('Частично', encodeCallback({ kind: 'lbl', ref: String(labelId), value: 'partly' }));
+    .text(s.btnLabelYes, encodeCallback({ kind: 'lbl', ref: String(labelId), value: 'yes' }))
+    .text(s.btnLabelNo, encodeCallback({ kind: 'lbl', ref: String(labelId), value: 'no' }))
+    .text(s.btnLabelPartly, encodeCallback({ kind: 'lbl', ref: String(labelId), value: 'partly' }));
 }
 
 /** Did the one live contact happen. */
 export function contractKeyboard(date: string): InlineKeyboard {
+  const s = t();
   return new InlineKeyboard()
-    .text('Контакт был', encodeCallback({ kind: 'ctr', ref: date, value: 'done' }))
-    .text('Не было', encodeCallback({ kind: 'ctr', ref: date, value: 'missed' }));
+    .text(s.btnContractDone, encodeCallback({ kind: 'ctr', ref: date, value: 'done' }))
+    .text(s.btnContractMissed, encodeCallback({ kind: 'ctr', ref: date, value: 'missed' }));
 }
 
 /** The credit for yesterday — the message that replaced the morning task. */
 export function creditKeyboard(date: string): InlineKeyboard {
+  const s = t();
   return new InlineKeyboard()
-    .text('Так и было', encodeCallback({ kind: 'cred', ref: date, value: 'yes' }))
-    .text('Не так', encodeCallback({ kind: 'cred', ref: date, value: 'no' }))
-    .text('Не помню', encodeCallback({ kind: 'cred', ref: date, value: 'unsure' }));
+    .text(s.btnCreditYes, encodeCallback({ kind: 'cred', ref: date, value: 'yes' }))
+    .text(s.btnCreditNo, encodeCallback({ kind: 'cred', ref: date, value: 'no' }))
+    .text(s.btnCreditUnsure, encodeCallback({ kind: 'cred', ref: date, value: 'unsure' }));
 }
-
-const ANSWER_LABELS: Record<string, string> = {
-  yes: 'всё ещё так',
-  no: 'уже нет',
-  partly: 'частично',
-  done: 'контакт был',
-  missed: 'контакта не было',
-  unsure: 'не помню',
-};
 
 /**
  * Replaces the keyboard after an answer, so the record shows what was answered and when.
@@ -78,5 +73,6 @@ const ANSWER_LABELS: Record<string, string> = {
  * it as HTML again would flatten every blockquote the message was built from.
  */
 export function answeredLine(value: string, timeHHMM: string): string {
-  return `Ответил: ${ANSWER_LABELS[value] ?? value}, ${timeHHMM}`;
+  const s = t();
+  return `${s.answeredPrefix}: ${s.answerLabels[value] ?? value}, ${timeHHMM}`;
 }

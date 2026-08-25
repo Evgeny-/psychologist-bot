@@ -80,7 +80,7 @@ Key ones:
 - `ASR_PROVIDER` — `elevenlabs` or `openai`
 - `TTS_PROVIDER` — `elevenlabs` or `openai`
 - `COMPARE_MODE=true` — run all LLM providers in parallel
-- `BOT_LANGUAGE` — `ru` or `en`
+- `BOT_LANGUAGE` — `ru` or `en`. Covers both halves: every system prompt has a Russian and an English variant, and all bot-facing text (buttons, callback toasts, headings, report titles) comes from `src/i18n/`. Adding a user-facing string means adding it to `ru.ts`, `en.ts` and the `Strings` interface — never inline it in a service.
 - `BOT_TIMEZONE` — for correct date calculations (e.g. `Europe/Amsterdam`)
 
 Scheduled jobs use `BOT_TIMEZONE`, including the daily morning credit at 07:15 (which stays silent on days with nothing to credit).

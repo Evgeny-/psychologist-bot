@@ -167,7 +167,10 @@ function buildVetoBlock(): string | null {
   try {
     const vetoes = queries.getVetoes();
     if (vetoes.length === 0) return null;
-    return `=== ЗАПРЕЩЁННЫЕ ТЕМЫ И ФОРМУЛИРОВКИ (никогда, ни в каком виде) ===\n${vetoes.map((v) => `- ${v.text}`).join('\n')}`;
+    const header = config.language === 'ru'
+      ? '=== ЗАПРЕЩЁННЫЕ ТЕМЫ И ФОРМУЛИРОВКИ (никогда, ни в каком виде) ==='
+      : '=== FORBIDDEN TOPICS AND PHRASINGS (never, in any form) ===';
+    return `${header}\n${vetoes.map((v) => `- ${v.text}`).join('\n')}`;
   } catch (err) {
     logWarn('report.morning.veto_block_failed', { reason: err instanceof Error ? err.message : String(err) });
     return null;
@@ -183,11 +186,13 @@ function buildVetoBlock(): string | null {
  */
 function buildCreditContextBlock(yesterday: string): string {
   const parts: string[] = [];
+  const ru = config.language === 'ru';
 
   try {
     const wins = queries.getWinsForDate(yesterday);
     if (wins.length > 0) {
-      parts.push(`Что вечерний разбор отметил как победы вчера:\n${wins.map((w) => `- ${w}`).join('\n')}`);
+      const label = ru ? 'Что вечерний разбор отметил как победы вчера' : "What yesterday's evening analysis recorded as wins";
+      parts.push(`${label}:\n${wins.map((w) => `- ${w}`).join('\n')}`);
     }
   } catch { /* fail-soft: the credit can still be built from the transcript alone */ }
 
@@ -197,8 +202,12 @@ function buildCreditContextBlock(yesterday: string): string {
   try {
     const already = queries.getRecentMorningCredits(14);
     if (already.length > 0) {
-      parts.push(`УЖЕ ЗАСЧИТАНО РАНЬШЕ — не засчитывай то же самое ещё раз, если это не заметно более трудный случай:\n${
-        already.map((c) => `- [${c.date}] «${c.quote}» — ${c.skill}${c.verdict === 'no' ? ' (он оспорил этот зачёт)' : ''}`).join('\n')}`);
+      const label = ru
+        ? 'УЖЕ ЗАСЧИТАНО РАНЬШЕ — не засчитывай то же самое ещё раз, если это не заметно более трудный случай'
+        : 'ALREADY CREDITED BEFORE — do not credit the same thing again unless this instance was markedly harder';
+      const disputed = ru ? ' (этот зачёт он оспорил)' : ' (this credit was disputed)';
+      parts.push(`${label}:\n${
+        already.map((c) => `- [${c.date}] «${c.quote}» — ${c.skill}${c.verdict === 'no' ? disputed : ''}`).join('\n')}`);
     }
   } catch { /* fail-soft */ }
 
@@ -206,19 +215,23 @@ function buildCreditContextBlock(yesterday: string): string {
     const start = shiftLocalDate(yesterday, -29);
     const recent = queries.getCreditsByDateRange(start, yesterday);
     if (recent.length > 0) {
-      parts.push(`Внешние отклики за 30 дней:\n${recent.map((c) => `- [${c.date}] ${c.text}`).join('\n')}`);
+      const label = ru ? 'Внешние отклики за 30 дней' : 'External responses over 30 days';
+      parts.push(`${label}:\n${recent.map((c) => `- [${c.date}] ${c.text}`).join('\n')}`);
     }
   } catch { /* fail-soft */ }
 
   try {
     const stats = queries.getMorningCreditStats();
-    parts.push(`Как он отвечал на прошлые зачёты: подтвердил ${stats.yes}, оспорил ${stats.no}, не вспомнил ${stats.unsure}, не ответил ${stats.unanswered}.`);
+    parts.push(ru
+      ? `Как он отвечал на прошлые зачёты: подтвердил ${stats.yes}, оспорил ${stats.no}, не вспомнил ${stats.unsure}, не ответил ${stats.unanswered}.`
+      : `How past credits were answered: confirmed ${stats.yes}, disputed ${stats.no}, could not recall ${stats.unsure}, no answer ${stats.unanswered}.`);
   } catch { /* fail-soft */ }
 
   const veto = buildVetoBlock();
   if (veto) parts.push(veto);
 
-  return parts.length > 0 ? `=== ДАННЫЕ ДЛЯ ЗАЧЁТА ===\n${parts.join('\n\n')}` : '';
+  const header = ru ? '=== ДАННЫЕ ДЛЯ ЗАЧЁТА ===' : '=== DATA FOR THE CREDIT ===';
+  return parts.length > 0 ? `${header}\n${parts.join('\n\n')}` : '';
 }
 
 function buildMorningBriefContext(today: string): { yesterday: string; context: string; hasYesterdayData: boolean } {
@@ -231,17 +244,20 @@ function buildMorningBriefContext(today: string): { yesterday: string; context: 
   }
 
   const primaryContext = fitContext(yesterdaySummaries, MAX_CONTEXT_CHARS - 60_000);
+  const ru = config.language === 'ru';
   const parts = [
-    `Сегодняшнее утро: ${today}`,
-    `День, за который засчитываем: ${yesterday}`,
+    ru ? `Сегодняшнее утро: ${today}` : `This morning: ${today}`,
+    ru ? `День, за который засчитываем: ${yesterday}` : `The day being credited: ${yesterday}`,
     buildCreditContextBlock(yesterday),
-    `=== ВЧЕРА (${yesterday}) ===\n${primaryContext}`,
+    ru ? `=== ВЧЕРА (${yesterday}) ===\n${primaryContext}` : `=== YESTERDAY (${yesterday}) ===\n${primaryContext}`,
   ].filter((p) => p.trim());
 
   const dayBeforeSummaries = buildDaySummaries(dayBefore, dayBefore);
   if (dayBeforeSummaries.length > 0) {
     const secondaryContext = formatSummariesCompact(dayBeforeSummaries).slice(0, 60_000);
-    parts.push(`=== ПОЗАВЧЕРА (${dayBefore}, только чтобы понять контекст) ===\n${secondaryContext}`);
+    parts.push(ru
+      ? `=== ПОЗАВЧЕРА (${dayBefore}, только чтобы понять контекст) ===\n${secondaryContext}`
+      : `=== THE DAY BEFORE (${dayBefore}, context only) ===\n${secondaryContext}`);
   }
 
   return {
@@ -516,7 +532,7 @@ async function runWeeklyReport(
   const baseContext = fitContext(summaries, MAX_CONTEXT_CHARS);
   const mechanicsContext = buildWeeklyMechanicsContext(startStr, endStr);
   const context = mechanicsContext ? `${mechanicsContext}\n\n---\n\n${baseContext}` : baseContext;
-  const systemPrompt = buildSystemPromptWithMemory(getWeeklySystemPrompt());
+  const systemPrompt = buildSystemPromptWithMemory(getWeeklySystemPrompt(config.language));
 
   const strings = t();
   const prefix = reportType === 'test_weekly' ? '🧪 TEST ' : '';
@@ -588,17 +604,22 @@ async function runWeeklyReport(
  */
 function buildMonthlyMechanicsContext(startStr: string, endStr: string): string | null {
   const parts: string[] = [];
+  const ru = config.language === 'ru';
 
   try {
     const confirmed = queries.getConfirmedMorningCredits(startStr, endStr);
     if (confirmed.length) {
-      parts.push(`Зачёты, которые он сам подтвердил кнопкой (дословно, ${confirmed.length} шт.):\n${
-        confirmed.map((c) => `- ${c.date}: «${c.quote}» — ${c.skill}`).join('\n')}`);
+      const label = ru
+        ? `Зачёты, которые он сам подтвердил кнопкой (дословно, ${confirmed.length} шт.)`
+        : `Credits confirmed with a tap (verbatim, ${confirmed.length})`;
+      parts.push(`${label}:\n${confirmed.map((c) => `- ${c.date}: «${c.quote}» — ${c.skill}`).join('\n')}`);
     } else {
-      parts.push('Подтверждённых зачётов за месяц нет.');
+      parts.push(ru ? 'Подтверждённых зачётов за месяц нет.' : 'No confirmed credits this month.');
     }
     const stats = queries.getMorningCreditStatsByRange(startStr, endStr);
-    parts.push(`Зачёты за месяц: подтвердил ${stats.yes}, оспорил ${stats.no}, не вспомнил ${stats.unsure}, не ответил ${stats.unanswered}.`);
+    parts.push(ru
+      ? `Зачёты за месяц: подтвердил ${stats.yes}, оспорил ${stats.no}, не вспомнил ${stats.unsure}, не ответил ${stats.unanswered}.`
+      : `Credits this month: confirmed ${stats.yes}, disputed ${stats.no}, could not recall ${stats.unsure}, no answer ${stats.unanswered}.`);
   } catch (err) {
     logWarn('report.monthly.credit_context_failed', { reason: err instanceof Error ? err.message : String(err) });
   }
@@ -606,7 +627,9 @@ function buildMonthlyMechanicsContext(startStr: string, endStr: string): string 
   try {
     const stats = queries.getContractStats(startStr, endStr);
     const total = stats.done + stats.missed + stats.open;
-    if (total > 0) parts.push(`Контракты за месяц: зачёт ${stats.done} из ${total} дней; не закрыто ${stats.open}.`);
+    if (total > 0) parts.push(ru
+      ? `Контракты за месяц: зачёт ${stats.done} из ${total} дней; не закрыто ${stats.open}.`
+      : `Contracts this month: counted ${stats.done} of ${total} days; ${stats.open} still open.`);
   } catch (err) {
     logWarn('report.monthly.contract_stats_failed', { reason: err instanceof Error ? err.message : String(err) });
   }
@@ -615,7 +638,9 @@ function buildMonthlyMechanicsContext(startStr: string, endStr: string): string 
     const labels = queries.getLabelReviewStats();
     const total = labels.yes + labels.no + labels.partly;
     if (total > 0) {
-      parts.push(`Ревизия ярлыков за всё время: разобрано ${total}; подтвердил утром ${labels.yes}, снял ${labels.no}, смягчил ${labels.partly}.`);
+      parts.push(ru
+        ? `Ревизия ярлыков за всё время: разобрано ${total}; подтвердил утром ${labels.yes}, снял ${labels.no}, смягчил ${labels.partly}.`
+        : `Label review, all time: ${total} reviewed; confirmed ${labels.yes}, dropped ${labels.no}, softened ${labels.partly}.`);
     }
   } catch (err) {
     logWarn('report.monthly.label_stats_failed', { reason: err instanceof Error ? err.message : String(err) });
@@ -623,14 +648,16 @@ function buildMonthlyMechanicsContext(startStr: string, endStr: string): string 
 
   try {
     const credits = queries.getCreditsByDateRange(startStr, endStr);
+    const label = ru ? 'Внешние зачёты за месяц (чужие реакции, дословно)' : "External credits this month (other people's reactions, verbatim)";
     parts.push(credits.length
-      ? `Внешние зачёты за месяц (чужие реакции, дословно):\n${credits.slice(0, 20).map((c) => `- ${c.date}: ${c.text}`).join('\n')}`
-      : 'Внешних зачётов за месяц не зафиксировано.');
+      ? `${label}:\n${credits.slice(0, 20).map((c) => `- ${c.date}: ${c.text}`).join('\n')}`
+      : (ru ? 'Внешних зачётов за месяц не зафиксировано.' : 'No external credits recorded this month.'));
   } catch (err) {
     logWarn('report.monthly.credits_failed', { reason: err instanceof Error ? err.message : String(err) });
   }
 
-  return parts.length ? `=== МЕХАНИКИ МЕСЯЦА ===\n${parts.join('\n\n')}` : null;
+  const header = ru ? '=== МЕХАНИКИ МЕСЯЦА ===' : '=== MONTH MECHANICS ===';
+  return parts.length ? `${header}\n${parts.join('\n\n')}` : null;
 }
 
 async function runMonthlyReport(
@@ -706,7 +733,7 @@ async function runMonthlyReport(
     fullContext = trimmedParts.join('\n\n---\n\n');
   }
 
-  const systemPrompt = buildSystemPromptWithMemory(getMonthlySystemPrompt());
+  const systemPrompt = buildSystemPromptWithMemory(getMonthlySystemPrompt(config.language));
 
   const strings = t();
   const prefix = reportType === 'test_monthly' ? '🧪 TEST ' : '';
@@ -763,7 +790,7 @@ function buildLabelAsk(yesterday: string): MorningAsk | null {
     return {
       kind: 'label',
       keyboard: labelKeyboard(pending.id),
-      text: `<b>Вчера${at} ты сказал:</b>\n<blockquote>${escapeHtml(pending.quote)}</blockquote>\nЭто всё ещё так?`,
+      text: `<b>${t().labelAskPrefix.replace('{at}', at)}</b>\n<blockquote>${escapeHtml(pending.quote)}</blockquote>\n${t().labelAskQuestion}`,
     };
   } catch (err) {
     logWarn('report.morning.label_ask_failed', { reason: err instanceof Error ? err.message : String(err) });
@@ -782,6 +809,26 @@ function runMorningHousekeeping(today: string): void {
   } catch (err) {
     logWarn('report.morning.housekeeping_failed', { today, reason: err instanceof Error ? err.message : String(err) });
   }
+}
+
+/**
+ * Does the credit's quote actually appear in what was said yesterday?
+ *
+ * The whole mechanic rests on the quote being verbatim — a credit built on a paraphrase is the
+ * bot telling the user what they said, which is the opposite of the point. The prompt forbids
+ * paraphrase, and a model still reordered a sentence on the first mixed-language run, so the
+ * rule is enforced here rather than trusted there.
+ *
+ * Matching is loose on everything that is not the words: case, punctuation, and whitespace vary
+ * between the transcript and what a model echoes back, and rejecting on those would throw away
+ * good credits.
+ */
+function quoteAppearsIn(quote: string, haystack: string): boolean {
+  const normalize = (text: string) =>
+    text.toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const needle = normalize(quote);
+  if (needle.length < 8) return false;
+  return normalize(haystack).includes(needle);
 }
 
 export interface ComposedMorning {
@@ -814,8 +861,8 @@ export function composeMorning(
   if (parsed.skip !== true && quote && skill) {
     const counterLine = counter ? `\n<i>${escapeHtml(counter)}</i>` : '';
     return {
-      body: `<b>Засчитано за вчера</b>\n<blockquote>${escapeHtml(quote)}</blockquote>\n${escapeHtml(skill)}${counterLine}`,
-      ask: { kind: 'credit', keyboard: creditKeyboard(today), text: 'Так и было?' },
+      body: `<b>${t().morningCreditHeader}</b>\n<blockquote>${escapeHtml(quote)}</blockquote>\n${escapeHtml(skill)}${counterLine}`,
+      ask: { kind: 'credit', keyboard: creditKeyboard(today), text: t().morningCreditAsk },
       credit: { quote, skill, counter },
     };
   }
@@ -866,7 +913,7 @@ async function runMorningBrief(
     return;
   }
 
-  const systemPrompt = buildSystemPromptWithMemory(getMorningSystemPrompt());
+  const systemPrompt = buildSystemPromptWithMemory(getMorningSystemPrompt(config.language));
   const llm = createLLMProvider();
   const start = Date.now();
   const result = await llm.analyze(context, systemPrompt);
@@ -879,6 +926,20 @@ async function runMorningBrief(
       reportType, today, yesterday, provider: llm.providerName, model: llm.modelName, outputChars: result.text.length,
     });
     return;
+  }
+
+  // Drop a credit whose quote is not actually in yesterday's text; the label review takes over.
+  if (parsed.credit?.quote) {
+    const saidYesterday = queries.getEntriesByDateRange(yesterday, yesterday)
+      .map((e) => e.transcript || e.raw_text || '')
+      .join('\n');
+    if (!quoteAppearsIn(parsed.credit.quote, saidYesterday)) {
+      logWarn('report.morning.quote_not_verbatim', {
+        reportType, today, yesterday, provider: llm.providerName, model: llm.modelName,
+        quote: parsed.credit.quote.slice(0, 120),
+      });
+      parsed.credit = null;
+    }
   }
 
   const composed = composeMorning(parsed, today, buildLabelAsk(yesterday));
@@ -931,7 +992,8 @@ async function sendMorning(
 ): Promise<void> {
   const isTest = reportType === 'test_morning_brief';
   const prefix = isTest ? '🧪 TEST ' : '';
-  const header = `${prefix}${ask?.kind === 'label' ? 'Вчерашняя формулировка' : 'Утро'} · ${today}`;
+  const strings = t();
+  const header = `${prefix}${ask?.kind === 'label' ? strings.morningHeaderLabel : strings.morningHeaderCredit} · ${today}`;
 
   // The question goes last and alone, so the buttons sit directly under the sentence they answer.
   const html = [body, ask?.text].filter((p) => p && p.trim()).join('\n\n');
@@ -1061,7 +1123,7 @@ async function updateMemoryFromReport(api: Api, chatId: number): Promise<void> {
   const latestReport = reports[reports.length - 1];
   const currentMemory = queries.getMemory();
 
-  const systemPrompt = getMemoryUpdatePrompt();
+  const systemPrompt = getMemoryUpdatePrompt(config.language);
   const userPrompt = config.language === 'ru'
     ? `Текущая память:\n${currentMemory || '(пусто)'}\n\n--- Недельный отчёт (${latestReport.period_start} — ${latestReport.period_end}) ---\n${latestReport.report_text}`
     : `Current memory:\n${currentMemory || '(empty)'}\n\n--- Weekly report (${latestReport.period_start} — ${latestReport.period_end}) ---\n${latestReport.report_text}`;
@@ -1130,7 +1192,7 @@ export async function generateMemory(api: Api, chatId: number): Promise<void> {
   const context = parts.join('\n\n---\n\n').slice(0, MAX_CONTEXT_CHARS);
   const currentMemory = queries.getMemory();
 
-  const systemPrompt = getMemoryUpdatePrompt();
+  const systemPrompt = getMemoryUpdatePrompt(config.language);
   const userPrompt = config.language === 'ru'
     ? `Текущая память:\n${currentMemory || '(пусто)'}\n\n${context}`
     : `Current memory:\n${currentMemory || '(empty)'}\n\n${context}`;

@@ -23,11 +23,22 @@ export function startScheduler(api: Api): void {
   const reminderChatId = channelId || groupId;
   const cronOptions = { timezone: config.timezone };
 
+  // One source of truth per job. The startup log used to hand-copy these strings and drifted:
+  // it still announced the morning at 08:00 for a release that had already moved it to 07:15,
+  // and the log is exactly where you look to check when something fires.
+  const SCHEDULE = {
+    reminder: '30 20 * * *',
+    consolidation: '55 23 * * *',
+    morning: '15 7 * * *',
+    weekly: '0 10 * * 1',
+    monthly: '0 10 1 * *',
+  } as const;
+
   if (!reminderChatId && !channelId) return;
 
   // Daily reminder at 20:30 → channel, with discussion group as a fallback.
   if (reminderChatId) {
-    cron.schedule('30 20 * * *', async () => {
+    cron.schedule(SCHEDULE.reminder, async () => {
       try {
         const today = todayLocal();
         if (queries.hasEntryForDate(today)) {
@@ -60,7 +71,7 @@ export function startScheduler(api: Api): void {
 
   // Nightly memory consolidation at 23:55: rebuild today's day-summary so it also
   // absorbs the thread conversations (the deepest work often happens there).
-  cron.schedule('55 23 * * *', async () => {
+  cron.schedule(SCHEDULE.consolidation, async () => {
     try {
       const today = todayLocal();
       logInfo('scheduler.daily_memory_consolidation.tick', { today });
@@ -74,7 +85,7 @@ export function startScheduler(api: Api): void {
     // Morning credit: every day at 07:15 → channel. Earlier than the old 08:00 because it is
     // read on the way to the laptop, not at it — and it stays silent on days with nothing to
     // credit, so the schedule is a ceiling rather than a quota.
-    cron.schedule('15 7 * * *', async () => {
+    cron.schedule(SCHEDULE.morning, async () => {
       try {
         logInfo('scheduler.morning.tick', { channelId });
         await generateMorningBrief(api, channelId);
@@ -84,7 +95,7 @@ export function startScheduler(api: Api): void {
     }, cronOptions);
 
     // Weekly report: Monday at 10:00 → channel
-    cron.schedule('0 10 * * 1', async () => {
+    cron.schedule(SCHEDULE.weekly, async () => {
       try {
         logInfo('scheduler.weekly.tick', { channelId });
         await generateWeeklyReport(api, channelId);
@@ -94,7 +105,7 @@ export function startScheduler(api: Api): void {
     }, cronOptions);
 
     // Monthly report: 1st of month at 10:00 → channel
-    cron.schedule('0 10 1 * *', async () => {
+    cron.schedule(SCHEDULE.monthly, async () => {
       try {
         logInfo('scheduler.monthly.tick', { channelId });
         await generateMonthlyReport(api, channelId);
@@ -108,9 +119,6 @@ export function startScheduler(api: Api): void {
     timezone: config.timezone,
     reminderChatId,
     channelId,
-    morningAt: '08:00',
-    reminderAt: '20:30',
-    weeklyAt: 'Mon 10:00',
-    monthlyAt: '1st 10:00',
+    ...SCHEDULE,
   });
 }

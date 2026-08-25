@@ -4,12 +4,9 @@ import { en } from './en.js';
 
 export interface Strings {
   transcriptHeader: string;
-  analysisHeader: string;
-  audioReplyHeader: string;
   audioFallbackNotice: string;
   audioReplyUnavailable: string;
   processingVoice: string;
-  processingText: string;
   errorGeneric: string;
   errorApiBalance: string;
   errorApiGeneric: string;
@@ -17,8 +14,6 @@ export interface Strings {
   reminderDay2plus: string;
   weeklyReportTitle: string;
   monthlyReportTitle: string;
-  morningBriefTitle: string;
-  morningBriefNoEntry: string;
   chartTitle: string;
   chartCaption: string;
   chartPanelPositive: string;
@@ -26,16 +21,6 @@ export interface Strings {
   chartWeekend: string;
   metricsAsk: string;
   streakInfo: string;
-  statsHeader: string;
-  statsStreak: string;
-  statsTotalEntries: string;
-  statsAvgMood: string;
-  statsAvgAnxiety: string;
-  statsAvgStress: string;
-  statsAvgProductivity: string;
-  statsAvgRoutine: string;
-  statsNoMetrics: string;
-  statsMetricsForDays: string;
   exportEmpty: string;
   metricNames: {
     mood: string;
@@ -43,13 +28,6 @@ export interface Strings {
     stress: string;
     productivity: string;
     routine: string;
-  };
-  metricsPatterns: {
-    mood: readonly string[];
-    anxiety: readonly string[];
-    stress: readonly string[];
-    productivity: readonly string[];
-    routine: readonly string[];
   };
 }
 

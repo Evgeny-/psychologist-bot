@@ -1,4 +1,4 @@
-import type { Api } from 'grammy';
+import type { Api, InlineKeyboard } from 'grammy';
 import { createLLMProvider, createAllLLMProviders, type LLMProvider } from '../providers/llm/index.js';
 import { getWeeklySystemPrompt } from '../prompts/weekly.js';
 import { getMonthlySystemPrompt } from '../prompts/monthly.js';
@@ -7,7 +7,8 @@ import { config } from '../config.js';
 import { t } from '../i18n/index.js';
 import { queries } from '../db/index.js';
 import type { MetricsRow } from '../db/queries.js';
-import { sendSplitMessages, sendRawHtmlMessages, markdownToHtml, postChannelHeader } from '../utils/telegram.js';
+import { sendSplitMessages, sendRawHtmlMessages, markdownToHtml, postChannelHeader, escapeHtml } from '../utils/telegram.js';
+import { creditKeyboard, labelKeyboard } from '../utils/callbacks.js';
 import { formatDateLocal, shiftLocalDate, todayLocal } from '../utils/date.js';
 import { averageMetric, formatCompactNumber } from '../utils/format.js';
 import { parseJsonResponse, stripJsonBlock } from '../utils/json.js';
@@ -41,27 +42,26 @@ interface DaySummary {
   metrics: string | null;
 }
 
+interface MorningCredit {
+  quote?: string | null;
+  skill?: string | null;
+  counter?: string | null;
+}
+
 interface MorningBriefEnvelope {
-  message?: string | null;
+  credit?: MorningCredit | null;
+  note?: string | null;
   skip?: boolean;
-  grounding?: string[];
 }
 
-interface WeeklyExperimentResult {
-  status?: 'done' | 'skipped';
+interface WeeklySlotVerdict {
+  status?: 'kept' | 'missed';
   note?: string;
-}
-
-interface WeeklyNextExperiment {
-  text?: string;
-  success_criterion?: string;
-  target_count?: number;
 }
 
 interface WeeklyReportEnvelope {
   report_text?: string;
-  experiment_result?: WeeklyExperimentResult | null;
-  next_experiment?: WeeklyNextExperiment | null;
+  slot_verdict?: WeeklySlotVerdict | null;
 }
 
 function buildDaySummaries(start: string, end: string): DaySummary[] {
@@ -156,121 +156,69 @@ function parseMorningBriefJson(text: string): MorningBriefEnvelope | null {
   return parseJsonResponse<MorningBriefEnvelope>(text);
 }
 
-function parseMorningBriefText(text: string): string {
-  const parsed = parseMorningBriefJson(text);
-  if (typeof parsed?.message === 'string' && parsed.message.trim()) {
-    return parsed.message.trim();
+/**
+ * Standing instructions about what must never be raised again.
+ *
+ * A generator that rediscovers a vetoed idea every few weeks is worse than one that never had
+ * it: each repeat says the refusal was not recorded. So the list goes into every morning prompt
+ * verbatim, and it never expires.
+ */
+function buildVetoBlock(): string | null {
+  try {
+    const vetoes = queries.getVetoes();
+    if (vetoes.length === 0) return null;
+    return `=== ЗАПРЕЩЁННЫЕ ТЕМЫ И ФОРМУЛИРОВКИ (никогда, ни в каком виде) ===\n${vetoes.map((v) => `- ${v.text}`).join('\n')}`;
+  } catch (err) {
+    logWarn('report.morning.veto_block_failed', { reason: err instanceof Error ? err.message : String(err) });
+    return null;
   }
-  return stripJsonBlock(text) || text.trim();
 }
 
-/** Day-of-week "genre" hint for the morning brief, chosen by weekday. */
-function morningGenreForDate(date: string): string {
-  const [y, m, d] = date.split('-').map(Number);
-  const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=Sun..6=Sat
-  const ru = [
-    'связь с людьми / благодарность',            // Sun
-    'фокус недели + эксперимент',                 // Mon
-    'вопрос дня',                                 // Tue
-    'микро-действие на сегодня',                  // Wed
-    'за каким паттерном понаблюдать',             // Thu
-    'уязвимая зона вечера/выходных по твоим данным', // Fri
-    'тело и ресурс',                              // Sat
-  ];
-  const en = [
-    'connection with people / gratitude',         // Sun
-    'week focus + experiment',                    // Mon
-    'question of the day',                        // Tue
-    'micro-action for today',                     // Wed
-    'which pattern to watch',                     // Thu
-    'vulnerable zone of the evening/weekend from your data', // Fri
-    'body and resource',                          // Sat
-  ];
-  return config.language === 'ru' ? ru[weekday] : en[weekday];
-}
-
-/** Compact per-day metrics trend for the last 7 days ending at `endDate`. */
-function buildMetricsTrendBlock(endDate: string): string | null {
-  const startDate = shiftLocalDate(endDate, -6);
-  const rows = queries.getMetricsByDateRange(startDate, endDate);
-  if (rows.length === 0) return null;
-
-  const byDate = new Map<string, MetricsRow[]>();
-  for (const row of rows) {
-    const existing = byDate.get(row.date);
-    if (existing) existing.push(row);
-    else byDate.set(row.date, [row]);
-  }
-
-  const lines: string[] = [];
-  for (let i = 6; i >= 0; i--) {
-    const date = shiftLocalDate(endDate, -i);
-    const dayRows = byDate.get(date);
-    if (!dayRows || dayRows.length === 0) continue;
-    const parts: string[] = [];
-    const mood = averageMetric(dayRows, 'mood');
-    const anxiety = averageMetric(dayRows, 'anxiety');
-    const stress = averageMetric(dayRows, 'stress');
-    const productivity = averageMetric(dayRows, 'productivity');
-    const routine = averageMetric(dayRows, 'routine');
-    if (mood !== null) parts.push(`mood ${formatCompactNumber(mood)}`);
-    if (anxiety !== null) parts.push(`anx ${formatCompactNumber(anxiety)}`);
-    if (stress !== null) parts.push(`str ${formatCompactNumber(stress)}`);
-    if (productivity !== null) parts.push(`prod ${formatCompactNumber(productivity)}`);
-    if (routine !== null) parts.push(`rout ${formatCompactNumber(routine)}`);
-    if (parts.length > 0) lines.push(`[${date}] ${parts.join(' · ')}`);
-  }
-  if (lines.length === 0) return null;
-
-  const header = config.language === 'ru'
-    ? 'Тренд метрик за 7 дней (по дням)'
-    : '7-day metrics trend (by day)';
-  return `${header}:\n${lines.join('\n')}`;
-}
-
-/** Intervention context for the morning brief: experiment, intentions, trend, patterns, genre. */
-function buildMorningInterventionBlock(today: string, yesterday: string): string {
+/**
+ * Counting material for the credit's "third time this month" line.
+ *
+ * The model is forbidden from inventing a number, so anything it may count has to arrive as
+ * data. Wins are what the evening analysis already extracts; the credit tally is how many of
+ * the previous credits he confirmed.
+ */
+function buildCreditContextBlock(yesterday: string): string {
   const parts: string[] = [];
 
   try {
-    const active = queries.getActiveExperiment();
-    if (active) {
-      const target = active.target_count ?? '—';
-      const criterion = active.success_criterion ?? '—';
-      parts.push(config.language === 'ru'
-        ? `Активный эксперимент недели: ${active.text}. Критерий: ${criterion}. Прогресс: ${active.progress_count}/${target}`
-        : `Active weekly experiment: ${active.text}. Criterion: ${criterion}. Progress: ${active.progress_count}/${target}`);
+    const wins = queries.getWinsForDate(yesterday);
+    if (wins.length > 0) {
+      parts.push(`Что вечерний разбор отметил как победы вчера:\n${wins.map((w) => `- ${w}`).join('\n')}`);
+    }
+  } catch { /* fail-soft: the credit can still be built from the transcript alone */ }
+
+  // Both halves of the repetition guard: what the bot already credited (so it does not credit the
+  // same walk three mornings running, and so a counter line has something real to count), and what
+  // other people said (a different kind of evidence, and the only one about their reactions).
+  try {
+    const already = queries.getRecentMorningCredits(14);
+    if (already.length > 0) {
+      parts.push(`УЖЕ ЗАСЧИТАНО РАНЬШЕ — не засчитывай то же самое ещё раз, если это не заметно более трудный случай:\n${
+        already.map((c) => `- [${c.date}] «${c.quote}» — ${c.skill}${c.verdict === 'no' ? ' (он оспорил этот зачёт)' : ''}`).join('\n')}`);
     }
   } catch { /* fail-soft */ }
 
   try {
-    const intentions = queries.getActionItemsForDate(yesterday).slice(0, 5);
-    if (intentions.length > 0) {
-      const label = config.language === 'ru' ? 'Вчерашние намерения' : "Yesterday's intentions";
-      parts.push(`${label}:\n${intentions.map((i) => `- ${i}`).join('\n')}`);
+    const start = shiftLocalDate(yesterday, -29);
+    const recent = queries.getCreditsByDateRange(start, yesterday);
+    if (recent.length > 0) {
+      parts.push(`Внешние отклики за 30 дней:\n${recent.map((c) => `- [${c.date}] ${c.text}`).join('\n')}`);
     }
   } catch { /* fail-soft */ }
 
   try {
-    const trend = buildMetricsTrendBlock(yesterday);
-    if (trend) parts.push(trend);
+    const stats = queries.getMorningCreditStats();
+    parts.push(`Как он отвечал на прошлые зачёты: подтвердил ${stats.yes}, оспорил ${stats.no}, не вспомнил ${stats.unsure}, не ответил ${stats.unanswered}.`);
   } catch { /* fail-soft */ }
 
-  try {
-    const patterns = getDistortionCounts().slice(0, 3);
-    if (patterns.length > 0) {
-      const label = config.language === 'ru'
-        ? 'Топ паттернов (всего / за 30 дней)'
-        : 'Top patterns (total / last 30 days)';
-      parts.push(`${label}:\n${patterns.map((p) => `${p.type}: ${p.total} / ${p.last30}`).join('\n')}`);
-    }
-  } catch { /* fail-soft */ }
+  const veto = buildVetoBlock();
+  if (veto) parts.push(veto);
 
-  const genreLabel = config.language === 'ru' ? 'Жанр дня (подсказка формата)' : 'Genre of the day (format hint)';
-  parts.push(`${genreLabel}: ${morningGenreForDate(today)}`);
-
-  const header = config.language === 'ru' ? '=== ФОКУС И ДАННЫЕ ДЛЯ ИНТЕРВЕНЦИИ ===' : '=== FOCUS AND DATA FOR THE INTERVENTION ===';
-  return `${header}\n${parts.join('\n\n')}`;
+  return parts.length > 0 ? `=== ДАННЫЕ ДЛЯ ЗАЧЁТА ===\n${parts.join('\n\n')}` : '';
 }
 
 function buildMorningBriefContext(today: string): { yesterday: string; context: string; hasYesterdayData: boolean } {
@@ -284,16 +232,16 @@ function buildMorningBriefContext(today: string): { yesterday: string; context: 
 
   const primaryContext = fitContext(yesterdaySummaries, MAX_CONTEXT_CHARS - 60_000);
   const parts = [
-    `Today morning date: ${today}`,
-    `Primary source day: ${yesterday}`,
-    buildMorningInterventionBlock(today, yesterday),
-    `=== YESTERDAY (${yesterday}) ===\n${primaryContext}`,
-  ];
+    `Сегодняшнее утро: ${today}`,
+    `День, за который засчитываем: ${yesterday}`,
+    buildCreditContextBlock(yesterday),
+    `=== ВЧЕРА (${yesterday}) ===\n${primaryContext}`,
+  ].filter((p) => p.trim());
 
   const dayBeforeSummaries = buildDaySummaries(dayBefore, dayBefore);
   if (dayBeforeSummaries.length > 0) {
     const secondaryContext = formatSummariesCompact(dayBeforeSummaries).slice(0, 60_000);
-    parts.push(`=== DAY BEFORE YESTERDAY (${dayBefore}) ===\n${secondaryContext}`);
+    parts.push(`=== ПОЗАВЧЕРА (${dayBefore}, только чтобы понять контекст) ===\n${secondaryContext}`);
   }
 
   return {
@@ -386,29 +334,80 @@ function extractWeeklyDisplayText(raw: string): string {
 }
 
 /** This-week vs last-week distortion counters + active experiment context for the weekly report. */
-function buildWeeklyExperimentContext(startStr: string, endStr: string): string | null {
+/**
+ * The week's behavioural facts: contract count, what survived the morning label review,
+ * the open slot, and externally sourced credits. These are the numbers the report is
+ * allowed to reason about — everything else in the week is narrative.
+ */
+function buildWeeklyMechanicsContext(startStr: string, endStr: string): string | null {
   const parts: string[] = [];
+  const ru = config.language === 'ru';
 
   try {
-    const active = queries.getActiveExperiment();
-    if (active) {
-      const events = queries.getExperimentEventsSince(active.id, startStr);
-      const target = active.target_count ?? '—';
-      const criterion = active.success_criterion ?? '—';
-      const eventNotes = events
-        .map((e) => (e.note ? `- ${e.note}` : null))
-        .filter((n): n is string => n !== null)
-        .slice(0, 10);
-      const lines = [
-        config.language === 'ru'
-          ? `Активный эксперимент: ${active.text}. Критерий: ${criterion}. Прогресс: ${active.progress_count}/${target}. Событий за неделю: ${events.length}.`
-          : `Active experiment: ${active.text}. Criterion: ${criterion}. Progress: ${active.progress_count}/${target}. Events this week: ${events.length}.`,
-      ];
-      if (eventNotes.length > 0) lines.push(eventNotes.join('\n'));
-      parts.push(lines.join('\n'));
+    const stats = queries.getContractStats(startStr, endStr);
+    const closed = stats.done + stats.missed;
+    if (closed > 0 || stats.open > 0) {
+      parts.push(ru
+        ? `Контракты недели (один живой контакт до начала работы): зачёт ${stats.done} из ${closed + stats.open} дней; не закрыто ${stats.open}.`
+        : `Contracts this week (one live contact before work): counted ${stats.done} of ${closed + stats.open} days; ${stats.open} still open.`);
     }
   } catch (err) {
-    logWarn('report.weekly.experiment_context_failed', { reason: err instanceof Error ? err.message : String(err) });
+    logWarn('report.weekly.contract_stats_failed', { reason: err instanceof Error ? err.message : String(err) });
+  }
+
+  // Per-day outcomes, not just the tally: the report is asked what the days that worked had in
+  // common, and an aggregate cannot answer that.
+  try {
+    const days = queries.getContractsByRange(startStr, endStr);
+    if (days.length) {
+      const line = days.map((d) => `${d.date} ${d.status}${d.text ? ` (${d.text})` : ''}`).join('; ');
+      parts.push(ru ? `Контракты по дням: ${line}` : `Contracts by day: ${line}`);
+    }
+  } catch (err) {
+    logWarn('report.weekly.contract_days_failed', { reason: err instanceof Error ? err.message : String(err) });
+  }
+
+  try {
+    const labels = queries.getLabelReviewStats();
+    const total = labels.yes + labels.no + labels.partly;
+    if (total > 0) {
+      parts.push(ru
+        ? `Ревизия ярлыков за всё время: разобрано ${total}; подтвердил утром ${labels.yes}, снял ${labels.no}, смягчил ${labels.partly}.`
+        : `Label review, all time: ${total} reviewed; confirmed ${labels.yes}, dropped ${labels.no}, softened ${labels.partly}.`);
+    }
+  } catch (err) {
+    logWarn('report.weekly.label_stats_failed', { reason: err instanceof Error ? err.message : String(err) });
+  }
+
+  try {
+    const open = queries.getOpenSlot();
+    if (open) {
+      const details = [open.when_at, open.who, open.cost].filter(Boolean).join(', ');
+      parts.push(ru
+        ? `ОТКРЫТЫЙ СЛОТ (назначен на неделе от ${open.week_start}): ${open.text}${details ? ` — ${details}` : ''}.`
+        : `OPEN SLOT (named in the week of ${open.week_start}): ${open.text}${details ? ` — ${details}` : ''}.`);
+    } else {
+      parts.push(ru ? 'ОТКРЫТОГО СЛОТА НЕТ.' : 'NO OPEN SLOT.');
+    }
+    const recent = queries.getRecentSlots(4).filter((sl) => sl.status !== 'open');
+    if (recent.length) {
+      const line = recent.map((sl) => `${sl.week_start}: ${sl.text} — ${sl.status}`).join('; ');
+      parts.push(ru ? `Прошлые слоты: ${line}` : `Past slots: ${line}`);
+    }
+  } catch (err) {
+    logWarn('report.weekly.slot_context_failed', { reason: err instanceof Error ? err.message : String(err) });
+  }
+
+  try {
+    const credits = queries.getCreditsByDateRange(startStr, endStr);
+    if (credits.length) {
+      const label = ru ? 'Внешние зачёты недели (чужие реакции, дословно)' : 'External credits this week (other people\'s reactions, verbatim)';
+      parts.push(`${label}:\n${credits.slice(0, 12).map((c) => `- ${c.date}: ${c.text}`).join('\n')}`);
+    } else {
+      parts.push(ru ? 'Внешних зачётов за неделю не зафиксировано.' : 'No external credits recorded this week.');
+    }
+  } catch (err) {
+    logWarn('report.weekly.credits_failed', { reason: err instanceof Error ? err.message : String(err) });
   }
 
   try {
@@ -422,7 +421,7 @@ function buildWeeklyExperimentContext(startStr: string, endStr: string): string 
       const sorted = counts
         .sort((a, b) => (b.counts[0] + b.counts[1]) - (a.counts[0] + a.counts[1]))
         .slice(0, 7);
-      const label = config.language === 'ru'
+      const label = ru
         ? 'Счётчики паттернов (прошлая неделя → эта неделя)'
         : 'Pattern counters (last week → this week)';
       const line = sorted.map((c) => `${c.type} ${c.counts[0]}→${c.counts[1]}`).join(', ');
@@ -432,49 +431,64 @@ function buildWeeklyExperimentContext(startStr: string, endStr: string): string 
     logWarn('report.weekly.pattern_counters_failed', { reason: err instanceof Error ? err.message : String(err) });
   }
 
+  // Previous reports, so the model can see what it has already recommended and refuse to
+  // say it a fourth time. Truncated hard: this is a repetition guard, not extra context.
+  try {
+    const prev = queries.getReportsByDateRange('weekly', shiftLocalDate(startStr, -21), shiftLocalDate(startStr, -1));
+    if (prev.length) {
+      const label = ru
+        ? 'УЖЕ СКАЗАНО В ПРОШЛЫХ ОТЧЁТАХ (не повторяй эти рекомендации)'
+        : 'ALREADY SAID IN PREVIOUS REPORTS (do not repeat these recommendations)'
+      parts.push(`${label}:\n${prev.slice(-2).map((r) => r.report_text.slice(0, 1200)).join('\n---\n')}`);
+    }
+  } catch (err) {
+    logWarn('report.weekly.previous_reports_failed', { reason: err instanceof Error ? err.message : String(err) });
+  }
+
   if (parts.length === 0) return null;
-  const header = config.language === 'ru' ? '=== ЭКСПЕРИМЕНТ И ПАТТЕРНЫ НЕДЕЛИ ===' : '=== WEEK EXPERIMENT AND PATTERNS ===';
+  const header = ru ? '=== МЕХАНИКИ И ПАТТЕРНЫ НЕДЕЛИ ===' : '=== WEEK MECHANICS AND PATTERNS ===';
   return `${header}\n${parts.join('\n\n')}`;
 }
 
-/** Close the active experiment and/or start the next one, based on the weekly envelope. */
-function applyWeeklyExperiment(env: WeeklyReportEnvelope, today: string): void {
+/**
+ * Close the open slot if the week's report ruled on it. Slots are never auto-created here:
+ * a slot only exists once he names a real date, person or payment in an entry — inventing
+ * one on his behalf would recreate the assigned-task format this replaced.
+ */
+function applyWeeklySlot(env: WeeklyReportEnvelope): void {
+  try {
+    const verdict = env.slot_verdict;
+    if (verdict?.status !== 'kept' && verdict?.status !== 'missed') return;
+    const open = queries.getOpenSlot();
+    if (!open) return;
+    queries.closeSlot(open.id, {
+      status: verdict.status,
+      result_note: typeof verdict.note === 'string' ? verdict.note : undefined,
+    });
+    logInfo('slot.weekly.closed', { slotId: open.id, status: verdict.status });
+  } catch (err) {
+    logWarn('slot.weekly.apply_failed', { reason: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+/**
+ * Retire any experiment left active by the previous format. Runs once: after the first
+ * weekly report under the new mechanics there is nothing left to close.
+ */
+function retireLegacyExperiment(today: string): void {
   try {
     const active = queries.getActiveExperiment();
-    const result = env.experiment_result;
-    const next = env.next_experiment;
-    const hasNext = !!(next && typeof next.text === 'string' && next.text.trim());
-
-    if (active) {
-      if (result && (result.status === 'done' || result.status === 'skipped')) {
-        queries.closeExperiment(active.id, {
-          status: result.status,
-          result_note: typeof result.note === 'string' ? result.note : undefined,
-          end_date: today,
-        });
-        logInfo('experiment.weekly.closed', { experimentId: active.id, status: result.status });
-      } else if (hasNext) {
-        // Rolling over to a new experiment — auto-close the old one to avoid two active.
-        queries.closeExperiment(active.id, {
-          status: 'skipped',
-          result_note: config.language === 'ru' ? 'Авто-закрыт при смене эксперимента' : 'Auto-closed at experiment rollover',
-          end_date: today,
-        });
-        logInfo('experiment.weekly.auto_closed', { experimentId: active.id });
-      }
-    }
-
-    if (hasNext && next) {
-      const id = queries.insertExperiment({
-        text: next.text!.trim(),
-        success_criterion: typeof next.success_criterion === 'string' ? next.success_criterion : undefined,
-        target_count: typeof next.target_count === 'number' ? next.target_count : undefined,
-        start_date: today,
-      });
-      logInfo('experiment.weekly.created', { experimentId: id, targetCount: next.target_count });
-    }
+    if (!active) return;
+    queries.closeExperiment(active.id, {
+      status: 'skipped',
+      result_note: config.language === 'ru'
+        ? 'Формат «эксперимент недели» заменён контрактом дня и слотом недели'
+        : 'The weekly-experiment format was replaced by the daily contract and the weekly slot',
+      end_date: today,
+    });
+    logInfo('experiment.retired', { experimentId: active.id });
   } catch (err) {
-    logWarn('experiment.weekly.apply_failed', { reason: err instanceof Error ? err.message : String(err) });
+    logWarn('experiment.retire_failed', { reason: err instanceof Error ? err.message : String(err) });
   }
 }
 
@@ -500,9 +514,9 @@ async function runWeeklyReport(
   }
 
   const baseContext = fitContext(summaries, MAX_CONTEXT_CHARS);
-  const experimentContext = buildWeeklyExperimentContext(startStr, endStr);
-  const context = experimentContext ? `${experimentContext}\n\n---\n\n${baseContext}` : baseContext;
-  const systemPrompt = buildSystemPromptWithMemory(getWeeklySystemPrompt(config.language));
+  const mechanicsContext = buildWeeklyMechanicsContext(startStr, endStr);
+  const context = mechanicsContext ? `${mechanicsContext}\n\n---\n\n${baseContext}` : baseContext;
+  const systemPrompt = buildSystemPromptWithMemory(getWeeklySystemPrompt());
 
   const strings = t();
   const prefix = reportType === 'test_weekly' ? '🧪 TEST ' : '';
@@ -554,14 +568,69 @@ async function runWeeklyReport(
   // Only the real weekly report (not test runs) mutates the experiment lifecycle.
   const effectiveEnvelope = primaryEnvelope ?? fallbackEnvelope;
   if (!primaryEnvelope && fallbackEnvelope) {
-    logWarn('report.weekly.experiment_fallback_envelope', {
+    logWarn('report.weekly.slot_fallback_envelope', {
       reportType,
       configuredPrimary: config.llm.provider,
     });
   }
-  if (reportType === 'weekly' && effectiveEnvelope) {
-    applyWeeklyExperiment(effectiveEnvelope, todayLocal());
+  if (reportType === 'weekly') {
+    retireLegacyExperiment(todayLocal());
+    if (effectiveEnvelope) applyWeeklySlot(effectiveEnvelope);
   }
+}
+
+/**
+ * The counted material a monthly report is allowed to state as fact.
+ *
+ * Only credits he confirmed with a tap go in. An unconfirmed credit is the bot's guess about
+ * his behaviour, and a month that reads its own guesses back to him as achievements is exactly
+ * the curated cheer the old "Позитивные моменты" section produced.
+ */
+function buildMonthlyMechanicsContext(startStr: string, endStr: string): string | null {
+  const parts: string[] = [];
+
+  try {
+    const confirmed = queries.getConfirmedMorningCredits(startStr, endStr);
+    if (confirmed.length) {
+      parts.push(`Зачёты, которые он сам подтвердил кнопкой (дословно, ${confirmed.length} шт.):\n${
+        confirmed.map((c) => `- ${c.date}: «${c.quote}» — ${c.skill}`).join('\n')}`);
+    } else {
+      parts.push('Подтверждённых зачётов за месяц нет.');
+    }
+    const stats = queries.getMorningCreditStatsByRange(startStr, endStr);
+    parts.push(`Зачёты за месяц: подтвердил ${stats.yes}, оспорил ${stats.no}, не вспомнил ${stats.unsure}, не ответил ${stats.unanswered}.`);
+  } catch (err) {
+    logWarn('report.monthly.credit_context_failed', { reason: err instanceof Error ? err.message : String(err) });
+  }
+
+  try {
+    const stats = queries.getContractStats(startStr, endStr);
+    const total = stats.done + stats.missed + stats.open;
+    if (total > 0) parts.push(`Контракты за месяц: зачёт ${stats.done} из ${total} дней; не закрыто ${stats.open}.`);
+  } catch (err) {
+    logWarn('report.monthly.contract_stats_failed', { reason: err instanceof Error ? err.message : String(err) });
+  }
+
+  try {
+    const labels = queries.getLabelReviewStats();
+    const total = labels.yes + labels.no + labels.partly;
+    if (total > 0) {
+      parts.push(`Ревизия ярлыков за всё время: разобрано ${total}; подтвердил утром ${labels.yes}, снял ${labels.no}, смягчил ${labels.partly}.`);
+    }
+  } catch (err) {
+    logWarn('report.monthly.label_stats_failed', { reason: err instanceof Error ? err.message : String(err) });
+  }
+
+  try {
+    const credits = queries.getCreditsByDateRange(startStr, endStr);
+    parts.push(credits.length
+      ? `Внешние зачёты за месяц (чужие реакции, дословно):\n${credits.slice(0, 20).map((c) => `- ${c.date}: ${c.text}`).join('\n')}`
+      : 'Внешних зачётов за месяц не зафиксировано.');
+  } catch (err) {
+    logWarn('report.monthly.credits_failed', { reason: err instanceof Error ? err.message : String(err) });
+  }
+
+  return parts.length ? `=== МЕХАНИКИ МЕСЯЦА ===\n${parts.join('\n\n')}` : null;
 }
 
 async function runMonthlyReport(
@@ -600,6 +669,11 @@ async function runMonthlyReport(
 
   const parts: string[] = [];
 
+  // Mechanics go first: they are the only counted facts in the context, and the trimming path
+  // below drops daily entries before weekly reports — so anything appended after them can be cut.
+  const monthlyMechanics = buildMonthlyMechanicsContext(startStr, endStr);
+  if (monthlyMechanics) parts.push(monthlyMechanics);
+
   if (allWeeklyReports.length > 0) {
     parts.push('=== Weekly Reports ===');
     for (const r of allWeeklyReports) {
@@ -616,6 +690,7 @@ async function runMonthlyReport(
 
   if (fullContext.length > MAX_CONTEXT_CHARS && allWeeklyReports.length > 0) {
     const trimmedParts: string[] = [];
+    if (monthlyMechanics) trimmedParts.push(monthlyMechanics);
     trimmedParts.push('=== Weekly Reports ===');
     for (const r of allWeeklyReports) {
       trimmedParts.push(`[${r.period_start} — ${r.period_end}]\n${r.report_text}`);
@@ -631,7 +706,7 @@ async function runMonthlyReport(
     fullContext = trimmedParts.join('\n\n---\n\n');
   }
 
-  const systemPrompt = buildSystemPromptWithMemory(getMonthlySystemPrompt(config.language));
+  const systemPrompt = buildSystemPromptWithMemory(getMonthlySystemPrompt());
 
   const strings = t();
   const prefix = reportType === 'test_monthly' ? '🧪 TEST ' : '';
@@ -665,122 +740,248 @@ async function runMonthlyReport(
   }
 }
 
+/**
+ * The single question this morning carries, if any.
+ *
+ * Telegram draws the keyboard under the whole message rather than beside the line it belongs to,
+ * so a message may hold exactly one question, placed last. That turns question selection into a
+ * priority chain instead of a checklist: the credit wins when there is one, because it is the
+ * thing he asked for; the label review takes over on the days nothing was worth crediting, which
+ * are exactly the days he said something absolute worth reading back.
+ */
+export interface MorningAsk {
+  text: string;
+  keyboard: InlineKeyboard;
+  kind: 'credit' | 'label';
+}
+
+function buildLabelAsk(yesterday: string): MorningAsk | null {
+  try {
+    const pending = queries.getLabelForReview(yesterday);
+    if (!pending) return null;
+    const at = pending.said_at ? `, ${pending.said_at}` : '';
+    return {
+      kind: 'label',
+      keyboard: labelKeyboard(pending.id),
+      text: `<b>Вчера${at} ты сказал:</b>\n<blockquote>${escapeHtml(pending.quote)}</blockquote>\nЭто всё ещё так?`,
+    };
+  } catch (err) {
+    logWarn('report.morning.label_ask_failed', { reason: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+/** Close out yesterday before opening today, so the counters describe what actually happened. */
+function runMorningHousekeeping(today: string): void {
+  try {
+    const missed = queries.markStaleContractsMissed(today);
+    // Three days is the honesty horizon for a label: past that he is reconstructing, not remembering.
+    const expired = queries.expireLabels(shiftLocalDate(today, -3));
+    queries.openContract(today);
+    if (missed || expired) logInfo('report.morning.housekeeping', { today, contractsMissed: missed, labelsExpired: expired });
+  } catch (err) {
+    logWarn('report.morning.housekeeping_failed', { today, reason: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export interface ComposedMorning {
+  body: string;
+  ask: MorningAsk | null;
+  credit: { quote: string; skill: string; counter: string } | null;
+}
+
+/**
+ * Turn the model's envelope into the message that gets sent, or into nothing.
+ *
+ * Pure, and separate from the sending, because every rule that matters lives here: a credit is
+ * only a credit when it has both a verbatim quote and a named skill (a paraphrase is the
+ * failure mode this rewrite exists to prevent), a bare note asks nothing at all, and an empty
+ * envelope falls through to the label review before it falls through to silence.
+ *
+ * Returns null when the morning should not be sent. That is a supported outcome: the previous
+ * version had no way to say nothing, so it said something every day for 142 days.
+ */
+export function composeMorning(
+  parsed: MorningBriefEnvelope,
+  today: string,
+  labelAsk: MorningAsk | null,
+): ComposedMorning | null {
+  const quote = typeof parsed.credit?.quote === 'string' ? parsed.credit.quote.trim() : '';
+  const skill = typeof parsed.credit?.skill === 'string' ? parsed.credit.skill.trim() : '';
+  const counter = typeof parsed.credit?.counter === 'string' ? parsed.credit.counter.trim() : '';
+  const note = typeof parsed.note === 'string' ? parsed.note.trim() : '';
+
+  if (parsed.skip !== true && quote && skill) {
+    const counterLine = counter ? `\n<i>${escapeHtml(counter)}</i>` : '';
+    return {
+      body: `<b>Засчитано за вчера</b>\n<blockquote>${escapeHtml(quote)}</blockquote>\n${escapeHtml(skill)}${counterLine}`,
+      ask: { kind: 'credit', keyboard: creditKeyboard(today), text: 'Так и было?' },
+      credit: { quote, skill, counter },
+    };
+  }
+
+  // A large external event with nothing to credit: name it, ask nothing.
+  if (note) return { body: escapeHtml(note), ask: null, credit: null };
+
+  if (labelAsk) return { body: '', ask: labelAsk, credit: null };
+
+  return null;
+}
+
+/**
+ * Morning message.
+ *
+ * This used to be a task for today. Across 47 mornings that carried a concrete request, not one
+ * was carried out in the form it asked for — 32 of them asked him to write something down, and
+ * he does not type. So it now runs backwards: it names one thing he already did, quotes him
+ * doing it, and asks him to confirm the record rather than to perform anything.
+ *
+ * Silence is a supported outcome and not a failure path. The previous version sent 142 mornings
+ * in a row and got zero replies; an unbroken streak of ignored messages does not build a habit,
+ * it teaches the channel is noise.
+ */
 async function runMorningBrief(
   api: Api,
   chatId: number,
   today: string,
   reportType: 'morning_brief' | 'test_morning_brief',
 ): Promise<void> {
-  const strings = t();
-  const prefix = reportType === 'test_morning_brief' ? '🧪 TEST ' : '';
-  const title = `${prefix}${strings.morningBriefTitle}`;
+  const isTest = reportType === 'test_morning_brief';
+
+  // A test run must not open a real contract or close yesterday's.
+  if (!isTest) runMorningHousekeeping(today);
 
   const { yesterday, context, hasYesterdayData } = buildMorningBriefContext(today);
-  logInfo('report.morning.start', {
-    reportType,
-    today,
-    yesterday,
-    hasYesterdayData,
-    contextChars: context.length,
-    chatId,
-  });
+  logInfo('report.morning.start', { reportType, today, yesterday, hasYesterdayData, contextChars: context.length, chatId });
 
+  // No entry yesterday means nothing to credit and nothing to read back. The old code sent a
+  // nudge to write tonight; that is a task, and it is the task he ignored most reliably.
   if (!hasYesterdayData) {
-    const message = strings.morningBriefNoEntry;
-    queries.insertReport({
-      type: reportType,
-      period_start: yesterday,
-      period_end: today,
-      report_text: message,
-    });
-    const body = markdownToHtml(message);
-    await sendRawHtmlMessages(api, chatId, `<blockquote>${title}</blockquote>\n\n${body}\n\n#bot`);
-    logWarn('report.morning.no_data', { reportType, today, yesterday, chatId });
+    const ask = buildLabelAsk(yesterday);
+    if (!ask) {
+      logInfo('report.morning.silent', { reportType, today, yesterday, reason: 'no entry yesterday' });
+      return;
+    }
+    await sendMorning(api, chatId, today, yesterday, reportType, '', ask, null);
     return;
   }
 
-  const systemPrompt = buildSystemPromptWithMemory(getMorningSystemPrompt(config.language));
+  const systemPrompt = buildSystemPromptWithMemory(getMorningSystemPrompt());
   const llm = createLLMProvider();
   const start = Date.now();
   const result = await llm.analyze(context, systemPrompt);
-  const message = parseMorningBriefText(result.text);
   const parsed = parseMorningBriefJson(result.text);
+
   if (!parsed) {
-    logWarn('report.morning.parse_fallback', {
-      reportType,
-      today,
-      yesterday,
-      provider: llm.providerName,
-      model: llm.modelName,
-      outputChars: result.text.length,
-    });
-  }
-
-  const isTest = reportType === 'test_morning_brief';
-  // grounding comes straight from LLM JSON — guard the type, not just truthiness.
-  const groundingList = Array.isArray(parsed?.grounding)
-    ? parsed.grounding.filter((g): g is string => typeof g === 'string' && g.trim() !== '')
-    : [];
-  const skipReason = groundingList.length ? groundingList.join('; ') : 'no concrete focus';
-  const parsedMessage = typeof parsed?.message === 'string' ? parsed.message.trim() : '';
-  // Treat a parsed envelope with no usable message as a skip too: falling back to the
-  // raw model output would dump the literal JSON envelope into the chat.
-  const shouldSkip = parsed !== null && (parsed.skip === true || parsedMessage === '');
-  if (parsed !== null && parsed.skip !== true && parsedMessage === '') {
-    logWarn('report.morning.empty_message', { reportType, today, yesterday, provider: llm.providerName, model: llm.modelName });
-  }
-
-  if (shouldSkip && !isTest) {
-    // Nothing concrete to intervene on — do NOT send a message, but DO record the run:
-    // hasReportForPeriod() is the per-day dedup guard, and without a row a restart
-    // would re-trigger the morning brief later the same day.
-    queries.insertReport({
-      type: reportType,
-      period_start: yesterday,
-      period_end: today,
-      report_text: `(skipped: ${skipReason})`,
-      llm_provider: llm.providerName,
-      llm_model: llm.modelName,
-    });
-    logInfo('report.morning.skipped', {
-      reportType,
-      today,
-      yesterday,
-      provider: llm.providerName,
-      model: llm.modelName,
-      groundingCount: groundingList.length,
+    // Without a parsed envelope there is no quote to stand behind, and a morning message that
+    // invents its own evidence is the exact failure this rewrite exists to remove.
+    logWarn('report.morning.parse_failed', {
+      reportType, today, yesterday, provider: llm.providerName, model: llm.modelName, outputChars: result.text.length,
     });
     return;
   }
 
-  const outgoing = shouldSkip ? `(skip: ${skipReason})` : (parsed !== null ? parsedMessage : message);
+  const composed = composeMorning(parsed, today, buildLabelAsk(yesterday));
+  if (!composed) {
+    logInfo('report.morning.silent', {
+      reportType, today, yesterday, provider: llm.providerName, model: llm.modelName,
+      skip: parsed.skip === true, elapsedMs: Date.now() - start,
+    });
+    return;
+  }
+  const { body, ask, credit } = composed;
+
+  await sendMorning(api, chatId, today, yesterday, reportType, body, ask, {
+    provider: llm.providerName,
+    model: llm.modelName,
+    costUsd: result.usage?.costUsd,
+    inputTokens: result.usage?.inputTokens,
+    outputTokens: result.usage?.outputTokens,
+    elapsedMs: Date.now() - start,
+    credit,
+  });
+}
+
+interface MorningSendMeta {
+  provider: string;
+  model: string;
+  costUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  elapsedMs: number;
+  credit: { quote: string; skill: string; counter: string } | null;
+}
+
+/**
+ * Post the morning: a short line to the channel, the message itself as a comment.
+ *
+ * The split is not cosmetic. An inline keyboard on a channel post replaces the "Comments"
+ * button, which would cut the thread off from the one message that most invites a reply — so
+ * the buttons have to live in the discussion group, and the channel gets a header only.
+ */
+async function sendMorning(
+  api: Api,
+  chatId: number,
+  today: string,
+  yesterday: string,
+  reportType: 'morning_brief' | 'test_morning_brief',
+  body: string,
+  ask: MorningAsk | null,
+  meta: MorningSendMeta | null,
+): Promise<void> {
+  const isTest = reportType === 'test_morning_brief';
+  const prefix = isTest ? '🧪 TEST ' : '';
+  const header = `${prefix}${ask?.kind === 'label' ? 'Вчерашняя формулировка' : 'Утро'} · ${today}`;
+
+  // The question goes last and alone, so the buttons sit directly under the sentence they answer.
+  const html = [body, ask?.text].filter((p) => p && p.trim()).join('\n\n');
+
+  const target = chatId === config.telegram.channelId
+    ? await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `<blockquote>${header}</blockquote>`)
+    : { chatId, replyToMessageId: undefined };
+
+  const messageIds = await sendRawHtmlMessages(api, target.chatId, `${html}\n\n#bot`, target.replyToMessageId, {
+    keyboard: ask?.keyboard,
+  });
 
   queries.insertReport({
     type: reportType,
     period_start: yesterday,
     period_end: today,
-    report_text: outgoing,
-    llm_provider: llm.providerName,
-    llm_model: llm.modelName,
+    report_text: html,
+    llm_provider: meta?.provider,
+    llm_model: meta?.model,
   });
 
-  const costInfo = result.usage ? ` | $${result.usage.costUsd.toFixed(5)}` : '';
-  const body = markdownToHtml(outgoing);
-  await sendRawHtmlMessages(api, chatId, `<blockquote>${title}${costInfo}</blockquote>\n\n${body}\n\n#bot`);
+  // Only a real credit gets a row: the button writes its verdict back by date, and a row without
+  // a credit would make the confirmed/disputed counter count label reviews as well.
+  if (!isTest && meta?.credit) {
+    try {
+      queries.insertMorningCredit({
+        date: today,
+        source_date: yesterday,
+        quote: meta.credit.quote,
+        skill: meta.credit.skill,
+        counter: meta.credit.counter || undefined,
+        message_id: messageIds[messageIds.length - 1],
+      });
+    } catch (err) {
+      logWarn('report.morning.credit_persist_failed', { today, reason: err instanceof Error ? err.message : String(err) });
+    }
+  }
 
   logInfo('report.morning.complete', {
     reportType,
     today,
     yesterday,
-    provider: llm.providerName,
-    model: llm.modelName,
-    elapsedMs: Date.now() - start,
-    outputChars: outgoing.length,
-    skip: shouldSkip,
-    groundingCount: parsed?.grounding?.length,
-    inputTokens: result.usage?.inputTokens,
-    outputTokens: result.usage?.outputTokens,
-    costUsd: result.usage?.costUsd?.toFixed(5),
+    ask: ask?.kind ?? 'none',
+    bodyChars: html.length,
+    provider: meta?.provider,
+    model: meta?.model,
+    elapsedMs: meta?.elapsedMs,
+    inputTokens: meta?.inputTokens,
+    outputTokens: meta?.outputTokens,
+    costUsd: meta?.costUsd?.toFixed(5),
   });
 }
 
@@ -860,7 +1061,7 @@ async function updateMemoryFromReport(api: Api, chatId: number): Promise<void> {
   const latestReport = reports[reports.length - 1];
   const currentMemory = queries.getMemory();
 
-  const systemPrompt = getMemoryUpdatePrompt(config.language);
+  const systemPrompt = getMemoryUpdatePrompt();
   const userPrompt = config.language === 'ru'
     ? `Текущая память:\n${currentMemory || '(пусто)'}\n\n--- Недельный отчёт (${latestReport.period_start} — ${latestReport.period_end}) ---\n${latestReport.report_text}`
     : `Current memory:\n${currentMemory || '(empty)'}\n\n--- Weekly report (${latestReport.period_start} — ${latestReport.period_end}) ---\n${latestReport.report_text}`;
@@ -929,7 +1130,7 @@ export async function generateMemory(api: Api, chatId: number): Promise<void> {
   const context = parts.join('\n\n---\n\n').slice(0, MAX_CONTEXT_CHARS);
   const currentMemory = queries.getMemory();
 
-  const systemPrompt = getMemoryUpdatePrompt(config.language);
+  const systemPrompt = getMemoryUpdatePrompt();
   const userPrompt = config.language === 'ru'
     ? `Текущая память:\n${currentMemory || '(пусто)'}\n\n${context}`
     : `Current memory:\n${currentMemory || '(empty)'}\n\n${context}`;

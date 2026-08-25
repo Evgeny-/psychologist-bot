@@ -44,7 +44,7 @@ export async function handleThreadReply(
   replyToMessageId?: number,
 ): Promise<void> {
   let systemPrompt = buildSystemPromptWithUserMemory(
-    getChatSystemPrompt(config.language),
+    getChatSystemPrompt(),
     todayLocal(),
     { includeReferenceDate: true },
   );

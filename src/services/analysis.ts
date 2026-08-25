@@ -1,10 +1,11 @@
-import type { Api } from 'grammy';
+import type { Api, InlineKeyboard } from 'grammy';
 import { createLLMProvider, createAllLLMProviders, type LLMProvider, type LLMUsage } from '../providers/llm/index.js';
 import { getDailySystemPrompt } from '../prompts/daily.js';
-import { todayLocal, shiftLocalDate } from '../utils/date.js';
+import { todayLocal, shiftLocalDate, mondayOfWeek } from '../utils/date.js';
 import { config } from '../config.js';
 import { t } from '../i18n/index.js';
 import { sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
+import { contractKeyboard } from '../utils/callbacks.js';
 import { queries } from '../db/index.js';
 import { sendAudioReply } from './audio-replies.js';
 import { buildSystemPromptWithUserMemory, sanitizeDailyMemorySummary } from './memory-context.js';
@@ -24,10 +25,22 @@ interface ThoughtRecord {
   belief_question?: string;
 }
 
-interface ExperimentSignal {
-  relevant?: boolean;
-  counted?: boolean;
+interface ContractSignal {
+  done?: boolean;
+  named?: string;
   note?: string;
+}
+
+interface LabelReviewSignal {
+  verdict?: 'yes' | 'no' | 'partly';
+  note?: string;
+}
+
+interface SlotSignal {
+  text?: string;
+  when?: string;
+  who?: string;
+  cost?: string;
 }
 
 interface AnalysisResult {
@@ -50,7 +63,10 @@ interface AnalysisResult {
   };
   daily_memory_summary?: string;
   thought_record?: ThoughtRecord | null;
-  experiment?: ExperimentSignal | null;
+  contract?: ContractSignal | null;
+  label_review?: LabelReviewSignal | null;
+  credits?: string[];
+  slot?: SlotSignal | null;
   closing_question?: string | null;
   analysis_text?: string;
   reply_audio_requested?: boolean;
@@ -127,6 +143,9 @@ function saveAnalysis(entryId: number, response: ParsedAnalysisResponse, llm: LL
     triggers_json: parsed?.triggers?.length ? JSON.stringify(parsed.triggers) : undefined,
     wins_json: parsed?.wins?.length ? JSON.stringify(parsed.wins) : undefined,
     orbit_themes_json: orbitThemes.length ? JSON.stringify(orbitThemes) : undefined,
+    closing_question: typeof parsed?.closing_question === 'string' && parsed.closing_question.trim()
+      ? parsed.closing_question.trim()
+      : undefined,
     gratitude_count: parsed?.gratitude_count ?? parsed?.gratitude?.length ?? 0,
     llm_provider: llm.providerName,
     llm_model: llm.modelName,
@@ -150,35 +169,117 @@ function saveDailyMemorySummary(date: string, entryId: number, parsed: AnalysisR
   return true;
 }
 
+const LABEL_DISTORTION_MARKERS = ['ярлык', 'label'];
+
+/** Distortions whose type is a label ("навешивание ярлыков"), which are the ones worth re-reading in the morning. */
+function extractLabelQuotes(parsed: AnalysisResult | null): string[] {
+  if (!Array.isArray(parsed?.distortions)) return [];
+  return parsed.distortions
+    .filter((d) => {
+      const type = typeof d?.type === 'string' ? d.type.toLowerCase() : '';
+      return LABEL_DISTORTION_MARKERS.some((m) => type.includes(m));
+    })
+    .map((d) => (typeof d?.quote === 'string' ? d.quote.trim() : ''))
+    .filter((q) => q.length > 0 && q.length <= 300)
+    .slice(0, 2);
+}
+
 /**
- * If the analysis marked the active experiment as counted, record the event and
- * bump progress. Must run at most once per entry (first successful provider);
- * the UNIQUE(experiment_id, entry_id) index backstops re-processing — a duplicate
- * insert throws, lands in the catch below, and progress is not incremented.
+ * Persist the behavioural signals the analysis extracted: the day's contract, the
+ * morning label verdict, external credits, a newly named slot, and any fresh labels
+ * held over for tomorrow.
+ *
+ * Runs at most once per entry (first successful provider) so compare mode does not
+ * double-count. Every branch is fail-soft: a broken signal must never cost the user
+ * their analysis reply.
  */
-function applyExperimentResult(entryId: number, parsed: AnalysisResult | null): boolean {
-  const experiment = parsed?.experiment;
-  if (!experiment?.counted) return false;
+function applyDailySignals(entryId: number, date: string, parsed: AnalysisResult | null): { contractCounted: boolean } {
+  let contractCounted = false;
+  if (!parsed) return { contractCounted };
+
+  // Contract: only a positive verdict is written straight away. A "not yet" early in the
+  // day must not close the day — the nightly sweep marks genuinely unanswered days missed.
   try {
-    const active = queries.getActiveExperiment();
-    if (!active) return false;
-    queries.insertExperimentEvent({
-      experiment_id: active.id,
-      entry_id: entryId,
-      note: typeof experiment.note === 'string' ? experiment.note : undefined,
-    });
-    queries.incrementExperimentProgress(active.id);
-    logInfo('experiment.event.counted', {
-      entryId,
-      experimentId: active.id,
-      progress: active.progress_count + 1,
-      target: active.target_count,
-    });
-    return true;
+    const contract = parsed.contract;
+    if (contract?.done === true) {
+      const existing = queries.getContract(date);
+      if (existing && existing.status !== 'done') {
+        queries.resolveContract(date, {
+          status: 'done',
+          note: typeof contract.named === 'string' ? contract.named : contract.note,
+          entry_id: entryId,
+        });
+        contractCounted = true;
+        logInfo('contract.counted', { entryId, date, named: contract.named });
+      }
+    } else if (typeof contract?.named === 'string' && contract.named.trim()) {
+      const existing = queries.getContract(date);
+      if (existing && !existing.text) queries.setContractText(date, contract.named.trim());
+    }
   } catch (err) {
-    logWarn('experiment.event.failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
-    return false;
+    logWarn('contract.apply_failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
   }
+
+  // Label review: yesterday's verdict, answered this morning or later in the day.
+  try {
+    const verdict = parsed.label_review?.verdict;
+    if (verdict === 'yes' || verdict === 'no' || verdict === 'partly') {
+      const pending = queries.getLabelForReview(shiftLocalDate(date, -1)) ?? queries.getLabelForReview(date);
+      if (pending) {
+        queries.reviewLabel(pending.id, verdict);
+        logInfo('label.reviewed', { entryId, labelId: pending.id, verdict });
+      }
+    }
+  } catch (err) {
+    logWarn('label.review_failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
+  }
+
+  // External credits: proof sourced from someone other than him.
+  try {
+    const credits = Array.isArray(parsed.credits) ? parsed.credits : [];
+    for (const credit of credits.slice(0, 5)) {
+      if (typeof credit !== 'string') continue;
+      const text = credit.trim();
+      if (!text) continue;
+      queries.insertCredit({ entry_id: entryId, date, text: text.slice(0, 500) });
+    }
+    if (credits.length) logInfo('credits.recorded', { entryId, count: credits.length });
+  } catch (err) {
+    logWarn('credits.apply_failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
+  }
+
+  // Slot: a commitment that already costs a date, money or another person.
+  try {
+    const slot = parsed.slot;
+    const text = typeof slot?.text === 'string' ? slot.text.trim() : '';
+    if (text) {
+      const open = queries.getOpenSlot();
+      if (!open || open.text.trim() !== text) {
+        const id = queries.insertSlot({
+          week_start: mondayOfWeek(date),
+          text: text.slice(0, 300),
+          when_at: typeof slot?.when === 'string' ? slot.when : undefined,
+          who: typeof slot?.who === 'string' ? slot.who : undefined,
+          cost: typeof slot?.cost === 'string' ? slot.cost : undefined,
+        });
+        logInfo('slot.recorded', { entryId, slotId: id });
+      }
+    }
+  } catch (err) {
+    logWarn('slot.apply_failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
+  }
+
+  // Fresh labels, stored verbatim for tomorrow morning's review.
+  try {
+    const entryTime = queries.getEntryById(entryId)?.local_time ?? undefined;
+    for (const quote of extractLabelQuotes(parsed)) {
+      queries.insertLabel({ entry_id: entryId, date, said_at: entryTime, quote });
+    }
+  } catch (err) {
+    logWarn('label.capture_failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
+  }
+
+  return { contractCounted };
 }
 
 function formatUsage(usage?: LLMUsage): string {
@@ -186,15 +287,92 @@ function formatUsage(usage?: LLMUsage): string {
   return ` | ${usage.inputTokens}in/${usage.outputTokens}out | $${usage.costUsd.toFixed(5)}`;
 }
 
+const escapeTg = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
 function formatMetricsLine(metrics: ExtractedMetrics): string {
-  const parts: string[] = [];
-  if (metrics.mood !== undefined) parts.push(`настроение: ${metrics.mood}`);
-  if (metrics.anxiety !== undefined) parts.push(`тревога: ${metrics.anxiety}`);
-  if (metrics.stress !== undefined) parts.push(`стресс: ${metrics.stress}`);
-  if (metrics.productivity !== undefined) parts.push(`продуктивность: ${metrics.productivity}`);
-  if (metrics.routine !== undefined) parts.push(`рутина: ${metrics.routine}`);
+  const parts: Array<[string, number]> = [];
+  if (metrics.mood !== undefined) parts.push(['наст', metrics.mood]);
+  if (metrics.anxiety !== undefined) parts.push(['трев', metrics.anxiety]);
+  if (metrics.stress !== undefined) parts.push(['стресс', metrics.stress]);
+  if (metrics.productivity !== undefined) parts.push(['прод', metrics.productivity]);
+  if (metrics.routine !== undefined) parts.push(['рут', metrics.routine]);
   if (parts.length === 0) return '';
-  return `\n<blockquote>📊 ${parts.join(' | ')}</blockquote>`;
+  // Monospace so the numbers line up under each other across days.
+  return `<pre>${parts.map(([k, v]) => `${k} ${v}`).join('   ')}</pre>`;
+}
+
+/** The one line he actually asked for: was the behaviour credited, and for what. */
+function formatCredit(parsed: AnalysisResult | null): string {
+  const contract = parsed?.contract;
+  if (contract?.done !== true) return '';
+  const what = typeof contract.named === 'string' ? contract.named.trim() : '';
+  if (!what) return '<b>✓ Засчитано</b>';
+  return `<b>✓ Засчитано:</b> ${escapeTg(what)}`;
+}
+
+/**
+ * Distortions with their quotes and reframes.
+ *
+ * The model has been producing these on every entry since March and they were written straight
+ * to SQLite and never rendered — the chat only ever saw the prose. This is the material he asked
+ * for six separate times in threads ("добавь деталей", "детальнее плиз").
+ */
+function formatDistortions(parsed: AnalysisResult | null): string {
+  const items = (parsed?.distortions ?? []).filter(
+    (d) => d && typeof d.quote === 'string' && d.quote.trim() && typeof d.reframe === 'string' && d.reframe.trim(),
+  );
+  if (items.length === 0) return '';
+
+  const body = items
+    .slice(0, 5)
+    .map((d) => {
+      const type = typeof d.type === 'string' && d.type.trim() ? ` <i>${escapeTg(d.type.trim())}</i>` : '';
+      return `<blockquote>${escapeTg(d.quote.trim())}</blockquote>${type}\n${escapeTg(d.reframe.trim())}`;
+    })
+    .join('\n\n');
+  return `<b>Мысли дня — ${items.length}</b>\n${body}`;
+}
+
+/**
+ * The one question the evening message may carry, and only when the answer is genuinely missing.
+ *
+ * The contract used to be asked every single morning, unconditionally, as a task for the day —
+ * which made it the most reliably ignored line the bot produced. It is now read out of what he
+ * already said: `applyDailySignals` resolves it from the transcript, and the buttons appear only
+ * on the days the transcript did not say either way. Telegram draws the keyboard under the whole
+ * message, so the question is appended last, alone.
+ */
+function buildContractAsk(date: string): { text: string; keyboard: InlineKeyboard } | null {
+  try {
+    const contract = queries.getContract(date);
+    if (!contract || contract.status !== 'open') return null;
+    return { text: 'Живой контакт сегодня был?', keyboard: contractKeyboard(date) };
+  } catch (err) {
+    logWarn('analysis.contract_ask_failed', { date, reason: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+/**
+ * Compose the evening reply.
+ *
+ * Order is deliberate: the credit goes first because it is the only thing that shows up in the
+ * notification preview, and it is the single element he named as missing ("чтобы меня засчитывали").
+ * No collapsing anywhere — he said he would expand everything or read nothing, so hiding content
+ * only costs a tap. Every analysis in the corpus fits one message even fully expanded.
+ */
+export function renderAnalysisMessage(
+  freeform: string,
+  parsed: AnalysisResult | null,
+  metrics: ExtractedMetrics,
+): string {
+  const blocks = [
+    formatCredit(parsed),
+    markdownToHtml(freeform),
+    formatDistortions(parsed),
+    formatMetricsLine(metrics),
+  ].filter((b) => b.trim());
+  return blocks.join('\n\n');
 }
 
 function getYesterdayDate(date: string): string {
@@ -211,17 +389,62 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
   });
 }
 
-function buildActiveExperimentBlock(): string | null {
+/**
+ * The day's contract, if one is open. Deliberately identical every day: the value is in
+ * the binary answer accumulating into a streak, not in the wording being fresh.
+ */
+function buildContractBlock(date: string): string | null {
   try {
-    const active = queries.getActiveExperiment();
-    if (!active) return null;
-    const target = active.target_count ?? '—';
-    const criterion = active.success_criterion ?? '—';
+    const contract = queries.getContract(date);
+    if (!contract) return null;
+    const named = contract.text ? (config.language === 'ru' ? ` Назвал утром: ${contract.text}.` : ` Named in the morning: ${contract.text}.`) : '';
+    if (contract.status === 'done') {
+      return config.language === 'ru'
+        ? `--- КОНТРАКТ ДНЯ: уже засчитан сегодня${named ? '.' + named : '.'} Повторно не засчитывай и не поднимай тему. ---`
+        : `--- CONTRACT OF THE DAY: already counted today${named ? '.' + named : '.'} Do not count it again and do not raise it. ---`;
+    }
     return config.language === 'ru'
-      ? `--- АКТИВНЫЙ ЭКСПЕРИМЕНТ НЕДЕЛИ: ${active.text}. Критерий: ${criterion}. Прогресс: ${active.progress_count}/${target} ---`
-      : `--- ACTIVE WEEKLY EXPERIMENT: ${active.text}. Criterion: ${criterion}. Progress: ${active.progress_count}/${target} ---`;
+      ? `--- КОНТРАКТ ДНЯ (открыт): один живой контакт с человеком сегодня — звонок, голосовое, сообщение, разговор, прямая просьба.${named} Заполни поле "contract", если из записи видно, был контакт или нет. ---`
+      : `--- CONTRACT OF THE DAY (open): one live contact with a person today — a call, a voice note, a text, a conversation, a direct request.${named} Fill the "contract" field if the entry shows whether the contact happened. ---`;
   } catch (err) {
-    logWarn('analysis.context.experiment_failed', { reason: err instanceof Error ? err.message : String(err) });
+    logWarn('analysis.context.contract_failed', { reason: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+/**
+ * Yesterday evening's label, verbatim, awaiting a morning verdict. Passed as context only
+ * so the model can catch an answer if he gives one — it must not chase him for it.
+ */
+function buildLabelReviewBlock(date: string): string | null {
+  try {
+    const pending = queries.getLabelForReview(shiftLocalDate(date, -1));
+    if (!pending) return null;
+    const at = pending.said_at ? ` в ${pending.said_at}` : '';
+    return config.language === 'ru'
+      ? `--- ЯРЛЫК НА РЕВИЗИЮ: вчера${at} прозвучало «${pending.quote}». Утром об этом уже спросили. Если пользователь в этой записи так или иначе ответил — заполни "label_review". Если не ответил — null, и НЕ переспрашивай. ---`
+      : `--- LABEL FOR REVIEW: yesterday${pending.said_at ? ` at ${pending.said_at}` : ''} he said "${pending.quote}". He was already asked this morning. If he answered in this entry in any way — fill "label_review". If not — null, and do NOT re-ask. ---`;
+  } catch (err) {
+    logWarn('analysis.context.label_failed', { reason: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+/**
+ * Questions already asked recently. Repetition is the documented failure mode of this
+ * channel: the same recommendation three times does not raise the odds of action, it
+ * lowers trust in every message that follows.
+ */
+function buildAlreadyAskedBlock(): string | null {
+  try {
+    const questions = queries.getRecentClosingQuestions(10);
+    if (questions.length === 0) return null;
+    const header = config.language === 'ru'
+      ? '--- УЖЕ СПРОШЕНО (не повторяй ни один из этих вопросов — ни дословно, ни по смыслу) ---'
+      : '--- ALREADY ASKED (do not repeat any of these — neither verbatim nor in meaning) ---';
+    return `${header}\n${questions.map((q) => `- ${q}`).join('\n')}`;
+  } catch (err) {
+    logWarn('analysis.context.already_asked_failed', { reason: err instanceof Error ? err.message : String(err) });
     return null;
   }
 }
@@ -265,14 +488,20 @@ export async function buildUserPromptWithContext(
     }
   }
 
-  const experimentBlock = buildActiveExperimentBlock();
-  if (experimentBlock) sections.push(experimentBlock);
+  const contractBlock = buildContractBlock(date);
+  if (contractBlock) sections.push(contractBlock);
+
+  const labelBlock = buildLabelReviewBlock(date);
+  if (labelBlock) sections.push(labelBlock);
 
   const intentionsBlock = buildYesterdayIntentionsBlock(yesterday);
   if (intentionsBlock) sections.push(intentionsBlock);
 
   const patternBlock = buildPatternContextBlock(config.language);
   if (patternBlock) sections.push(patternBlock);
+
+  const alreadyAskedBlock = buildAlreadyAskedBlock();
+  if (alreadyAskedBlock) sections.push(alreadyAskedBlock);
 
   if (orbitContextEnabled) {
     const orbitBlock = buildOrbitContextBlock(date, entryId);
@@ -338,7 +567,7 @@ export async function analyzeEntry(
 ): Promise<ExtractedMetrics> {
   const entryDate = date || todayLocal();
   const systemPrompt = buildSystemPromptWithUserMemory(
-    getDailySystemPrompt(config.language),
+    getDailySystemPrompt(),
     entryDate,
     { includeReferenceDate: false },
   );
@@ -407,7 +636,7 @@ export async function analyzeEntry(
 
   const metrics = saveAnalysis(entryId, parsedResponse, llm);
   const dailyMemorySaved = saveDailyMemorySummary(entryDate, entryId, parsedResponse.parsed, llm);
-  const experimentCounted = applyExperimentResult(entryId, parsedResponse.parsed);
+  const { contractCounted } = applyDailySignals(entryId, entryDate, parsedResponse.parsed);
 
   // Save analysis as assistant message in thread
   const freeform = parsedResponse.freeform;
@@ -419,11 +648,12 @@ export async function analyzeEntry(
     llm_model: llm.modelName,
   });
 
-  const costInfo = result.usage ? ` | $${result.usage.costUsd.toFixed(5)}` : '';
-  const meta = `<blockquote>${t().analysisHeader}${costInfo}</blockquote>`;
-  const body = markdownToHtml(freeform);
-  const metricsLine = formatMetricsLine(metrics);
-  await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}${metricsLine}`, replyToMessageId);
+  // No technical header: it used to occupy the first line, which is the only part visible in
+  // the notification preview, and spent it on the cost of the API call.
+  const contractAsk = buildContractAsk(entryDate);
+  const rendered = renderAnalysisMessage(freeform, parsedResponse.parsed, metrics);
+  const outgoing = contractAsk ? `${rendered}\n\n${contractAsk.text}` : rendered;
+  await sendRawHtmlMessages(api, chatId, outgoing, replyToMessageId, { keyboard: contractAsk?.keyboard });
   logInfo('llm.analysis.complete', {
     chatId,
     entryId,
@@ -439,7 +669,7 @@ export async function analyzeEntry(
     dailyMemorySaved,
     thoughtRecord: !!parsedResponse.parsed?.thought_record,
     closingQuestion: !!parsedResponse.parsed?.closing_question,
-    experimentCounted,
+    contractCounted,
     inputTokens: result.usage?.inputTokens,
     outputTokens: result.usage?.outputTokens,
     costUsd: result.usage?.costUsd?.toFixed(5),
@@ -506,10 +736,10 @@ async function analyzeCompare(
       const freeform = parsedResponse.freeform;
 
       // Save first successful provider's response as thread context for follow-up chat.
-      // Experiment progress is counted only once per entry (first successful provider).
+      // Behavioural signals are recorded only once per entry (first successful provider).
       if (!threadSaved) {
         const dailyMemorySaved = saveDailyMemorySummary(entryDate, entryId, parsedResponse.parsed, llm);
-        const experimentCounted = applyExperimentResult(entryId, parsedResponse.parsed);
+        const { contractCounted } = applyDailySignals(entryId, entryDate, parsedResponse.parsed);
         queries.insertThreadMessage({
           thread_id: threadId,
           role: 'assistant',
@@ -524,13 +754,12 @@ async function analyzeCompare(
           provider: llm.providerName,
           model: llm.modelName,
           saved: dailyMemorySaved,
-          experimentCounted,
+          contractCounted,
         });
       }
       const meta = `<blockquote>${label} | ${elapsed}s${formatUsage(result.usage)}</blockquote>`;
-      const body = markdownToHtml(freeform);
-      const metricsLine = formatMetricsLine(metrics);
-      await sendRawHtmlMessages(api, chatId, `${meta}\n\n${body}${metricsLine}`, replyToMessageId);
+      const rendered = renderAnalysisMessage(freeform, parsedResponse.parsed, metrics);
+      await sendRawHtmlMessages(api, chatId, `${meta}\n\n${rendered}`, replyToMessageId);
       logInfo('llm.analysis.compare_complete', {
         chatId,
         entryId,

@@ -1,8 +1,8 @@
 /**
  * Prompt-eval harness for the daily analysis.
  *
- * Rebuilds the REAL prompt (memory blocks + experiment + patterns + similar episodes +
- * yesterday/earlier context) for existing diary entries out of a DB dump, runs it against
+ * Rebuilds the REAL prompt (memory blocks + contract + label review + patterns + already-asked
+ * questions + similar episodes + yesterday/earlier context) for existing entries out of a DB dump, runs it against
  * OpenAI with a chosen system-prompt variant / model / reasoning effort, and saves
  * side-by-side results for comparison.
  *
@@ -63,7 +63,7 @@ const PRICING: Record<string, { input: number; output: number }> = {
 
 const basePrompt = arg('system-file')
   ? fs.readFileSync(arg('system-file')!, 'utf8')
-  : getDailySystemPrompt(config.language);
+  : getDailySystemPrompt();
 
 fs.mkdirSync(outDir, { recursive: true });
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;

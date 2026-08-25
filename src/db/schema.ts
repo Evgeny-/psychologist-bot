@@ -71,6 +71,14 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
     try { db.exec("ALTER TABLE analyses ADD COLUMN orbit_themes_json TEXT"); } catch { /* table may not exist yet */ }
   }
 
+  // Migration: persist the bot's closing question so later prompts can avoid repeating it.
+  // Repetition is the failure mode this loop is built to avoid: a recommendation that lands
+  // three times without being acted on teaches the reader to skip the channel.
+  const hasClosingQuestion = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('analyses') WHERE name='closing_question'").get() as { cnt: number };
+  if (hasClosingQuestion.cnt === 0) {
+    try { db.exec("ALTER TABLE analyses ADD COLUMN closing_question TEXT"); } catch { /* table may not exist yet */ }
+  }
+
   // Migration: entry provenance — 'live' (telegram) vs 'archive' (imported past diaries)
   const hasSource = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('entries') WHERE name='source'").get() as { cnt: number };
   if (hasSource.cnt === 0) {
@@ -88,6 +96,7 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
       transcript TEXT,
       duration_seconds INTEGER,
       local_time TEXT,
+      source TEXT NOT NULL DEFAULT 'live',
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -102,6 +111,8 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
       emotions_json TEXT,
       triggers_json TEXT,
       wins_json TEXT,
+      orbit_themes_json TEXT,
+      closing_question TEXT,
       gratitude_count INTEGER DEFAULT 0,
       llm_provider TEXT,
       llm_model TEXT,
@@ -194,6 +205,83 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
 
     INSERT OR IGNORE INTO memory (id, content) VALUES (1, '');
 
+    -- One binary contract per day: a single live contact made before the workday starts.
+    -- Binary on purpose — the previous "weekly experiment" format failed because it could
+    -- always be counted as done "in spirit"; "yes/no" cannot.
+    CREATE TABLE IF NOT EXISTS contracts (
+      date TEXT PRIMARY KEY,
+      text TEXT,
+      status TEXT NOT NULL CHECK(status IN ('open', 'done', 'missed')) DEFAULT 'open',
+      resolved_entry_id INTEGER REFERENCES entries(id),
+      note TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      resolved_at TEXT
+    );
+
+    -- A slot is a commitment that already costs something: a booked date, a paid seat,
+    -- another person expecting you. Intentions without one of those do not survive.
+    CREATE TABLE IF NOT EXISTS slots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      week_start TEXT NOT NULL,
+      text TEXT NOT NULL,
+      when_at TEXT,
+      who TEXT,
+      cost TEXT,
+      status TEXT NOT NULL CHECK(status IN ('open', 'kept', 'missed')) DEFAULT 'open',
+      result_note TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      closed_at TEXT
+    );
+
+    -- Verbatim labels, kept for the next morning's review. The point is not to argue with
+    -- the label in the moment (that never works) but to ask twelve hours later whether it
+    -- still holds, and to accumulate the answer as a counter.
+    CREATE TABLE IF NOT EXISTS labels (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entry_id INTEGER REFERENCES entries(id),
+      date TEXT NOT NULL,
+      said_at TEXT,
+      quote TEXT NOT NULL,
+      verdict TEXT CHECK(verdict IN ('yes', 'no', 'partly')),
+      reviewed_at TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- External evidence that the work landed: someone's reaction, praise, a thing shipped
+    -- and noticed. Separate from the wins field because only externally sourced evidence
+    -- counts as proof for this user; his own effort does not.
+    CREATE TABLE IF NOT EXISTS credits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entry_id INTEGER REFERENCES entries(id),
+      date TEXT NOT NULL,
+      text TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- The morning message stopped being a task for today and became a credit for yesterday.
+    -- One question per morning, answered with one tap; "unsure" is a legitimate outcome, without
+    -- it the counter degrades into a tally of failures.
+    CREATE TABLE IF NOT EXISTS morning_credits (
+      date TEXT PRIMARY KEY,
+      source_date TEXT NOT NULL,
+      quote TEXT,
+      skill TEXT,
+      counter TEXT,
+      verdict TEXT CHECK(verdict IN ('yes', 'no', 'unsure')),
+      message_id INTEGER,
+      created_at TEXT DEFAULT (datetime('now')),
+      answered_at TEXT
+    );
+
+    -- A permanent blacklist. Some topics he has refused outright ("правило про 24 часа меня
+    -- очень бесит"), and a generator that rediscovers them every few weeks is worse than one
+    -- that never had the idea. Rows are never expired: a veto is a standing instruction.
+    CREATE TABLE IF NOT EXISTS vetoes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      text TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_entries_date ON entries(date);
     CREATE INDEX IF NOT EXISTS idx_metrics_date ON metrics(date);
     CREATE INDEX IF NOT EXISTS idx_reports_period ON reports(type, period_start);
@@ -201,6 +289,11 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_daily_memory_date ON daily_memory(date);
     CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status);
     CREATE INDEX IF NOT EXISTS idx_experiment_events_experiment ON experiment_events(experiment_id);
+    CREATE INDEX IF NOT EXISTS idx_contracts_status ON contracts(status);
+    CREATE INDEX IF NOT EXISTS idx_slots_status ON slots(status);
+    CREATE INDEX IF NOT EXISTS idx_labels_date ON labels(date);
+    CREATE INDEX IF NOT EXISTS idx_credits_date ON credits(date);
+    CREATE INDEX IF NOT EXISTS idx_morning_credits_verdict ON morning_credits(verdict);
   `);
 
   // Guard against double-counting: at most one experiment event per (experiment, entry).

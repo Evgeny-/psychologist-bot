@@ -15,7 +15,12 @@ Multiple entries per day? The bot sees your earlier entries as reference, so it 
 - **Thread conversations** — reply to discuss your entry using CBT techniques (Socratic dialogue, reframing)
 - **Audio replies on demand** — ask the bot to answer by voice/audio and it will synthesize the reply
 - **Same-day context** — later entries include earlier ones as reference, so the model sees the full picture
-- **Morning brief** — every morning the bot posts a short carry-over note to the main channel based on yesterday's diary context
+- **Morning credit** — the morning message names one thing you actually did yesterday, quoted verbatim, and asks one question with one row of buttons: was that how it went? It is not a task. On days with nothing worth crediting the bot sends nothing at all — silence is a supported outcome, not a failure
+- **Daily contract** — one binary commitment per day: a single live contact with a person. The evening entry usually answers it by itself; the buttons only appear when it didn't. The week's count shows up in the weekly report. Binary on purpose — a target that can be met "in spirit" always is
+- **Label review** — a verbatim label from yesterday evening is read back the next morning with one question: still true — yes / no / partly. No arguing, just a counter of how many evening verdicts survive the morning. Used on the mornings where there is no credit to give
+- **Vetoes** — `/veto <text>` permanently blacklists a topic or phrasing. The list goes into every morning prompt verbatim and never expires; `/veto` lists them, `/veto -3` removes one
+- **Weekly slot** — instead of assigning an exercise, the weekly report asks a single question: which slot did you book or pay for this week (date, time, person, amount). Slots are only recorded when a real commitment is named in an entry
+- **External credits** — reactions from other people are stored separately from your own wins, and listed back in the weekly report
 - **Short-term memory** — compact daily summaries for the last 10 days, used in new analyses and thread replies
 - **Compare mode** — run Claude + OpenAI in parallel, see both analyses side by side
 - **Reports** — weekly and monthly summaries with smart context fitting, each with an attached 30-day metrics chart (rendered locally, with missing days shown by absent markers)
@@ -33,8 +38,9 @@ Type these in the **channel** (not the discussion group):
 |---------|-------------|
 | `/weekly` | Generate weekly report (Monday → today) |
 | `/monthly` | Generate monthly report (1st → today) |
-| `/morning` | Generate today's morning brief manually |
-| `/stats` | Show streak, entry count, average metrics |
+| `/morning` | Generate today's morning credit manually |
+| `/veto` | List standing "never raise this again" instructions |
+| `/veto <text>` | Add one; `/veto -3` removes it by number |
 | `/export` | Download all entries as CSV |
 | `/memory` | Show long-term memory |
 | `/recentmemory` | Show short-term daily memory |
@@ -77,7 +83,7 @@ Key ones:
 - `BOT_LANGUAGE` — `ru` or `en`
 - `BOT_TIMEZONE` — for correct date calculations (e.g. `Europe/Amsterdam`)
 
-Scheduled jobs use `BOT_TIMEZONE`, including the daily morning brief at 08:00.
+Scheduled jobs use `BOT_TIMEZONE`, including the daily morning credit at 07:15 (which stays silent on days with nothing to credit).
 
 Runtime logs are written both to stdout/journald and to `logs/app.log` in logfmt-style single-line entries, so stage timings can be grepped without digging through raw stack traces.
 

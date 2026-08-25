@@ -9,7 +9,8 @@ import { generateTestWeeklyReport, generateTestMonthlyReport, generateTestMornin
 import { generateRecentDailyMemory, showRecentDailyMemory } from './services/daily-memory.js';
 import { MEMORY_MAX_LENGTH } from './prompts/memory.js';
 import { todayLocal, nowLocalTime, formatDateLocal } from './utils/date.js';
-import { sendSplitMessages, sendRawHtmlMessages, notifyChannelPostForwarded, postChannelHeader } from './utils/telegram.js';
+import { sendSplitMessages, sendRawHtmlMessages, notifyChannelPostForwarded, postChannelHeader, escapeHtml } from './utils/telegram.js';
+import { decodeCallback, answeredLine } from './utils/callbacks.js';
 import { ApiBalanceError } from './providers/asr/elevenlabs.js';
 import { ApiBalanceError as LLMBalanceError } from './providers/llm/claude.js';
 import { logError, logInfo, logWarn } from './utils/logger.js';
@@ -17,6 +18,63 @@ import { logError, logInfo, logWarn } from './utils/logger.js';
 
 export function createBot(): Bot {
   const bot = new Bot(config.telegram.botToken);
+
+  /**
+   * Answers to the bot's one-question messages.
+   *
+   * Every ask lives in the discussion group, never in a channel post: an inline keyboard on a
+   * channel post removes the "Comments" button and takes the whole thread with it.
+   */
+  bot.on('callback_query:data', async (ctx) => {
+    const payload = decodeCallback(ctx.callbackQuery.data);
+    if (!payload) {
+      await ctx.answerCallbackQuery().catch(() => {});
+      return;
+    }
+
+    const fromId = ctx.from?.id;
+    if (config.telegram.ownerUserId && fromId !== config.telegram.ownerUserId) {
+      logWarn('bot.callback.foreign_user', { fromId, data: ctx.callbackQuery.data });
+      await ctx.answerCallbackQuery({ text: 'Это не твоя кнопка' }).catch(() => {});
+      return;
+    }
+
+    try {
+      let toast = 'Записал';
+      if (payload.kind === 'lbl') {
+        const verdict = payload.value as 'yes' | 'no' | 'partly';
+        queries.reviewLabel(Number(payload.ref), verdict);
+        toast = verdict === 'no' ? 'Снято' : 'Записал';
+      } else if (payload.kind === 'ctr') {
+        queries.resolveContract(payload.ref, { status: payload.value as 'done' | 'missed' });
+      } else if (payload.kind === 'cred') {
+        queries.answerMorningCredit(payload.ref, payload.value as 'yes' | 'no' | 'unsure');
+      }
+
+      logInfo('bot.callback.answered', { kind: payload.kind, ref: payload.ref, value: payload.value, fromId });
+      await ctx.answerCallbackQuery({ text: toast }).catch(() => {});
+
+      // Rewrite the message so the record shows what was answered; without this the buttons stay
+      // tappable and the history says nothing about which question they belonged to.
+      //
+      // The original text is re-sent with its original entities rather than re-parsed as HTML:
+      // `message.text` comes back with the markup stripped, so a round-trip through the parser
+      // would flatten the quote the question was built around. Entity offsets are UTF-16 code
+      // units, which is what String#length counts, so appending leaves every offset valid.
+      const message = ctx.callbackQuery.message;
+      const original = message && 'text' in message ? message.text ?? '' : '';
+      const entities = message && 'entities' in message ? message.entities ?? [] : [];
+      const suffix = answeredLine(payload.value, nowLocalTime());
+      const updated = original ? `${original}\n\n${suffix}` : suffix;
+      await ctx.editMessageText(updated, {
+        entities: [...entities, { type: 'italic' as const, offset: updated.length - suffix.length, length: suffix.length }],
+        reply_markup: undefined,
+      }).catch((err) => logWarn('bot.callback.edit_failed', { error: err }));
+    } catch (err) {
+      logError('bot.callback.failed', err, { data: ctx.callbackQuery.data });
+      await ctx.answerCallbackQuery({ text: 'Не получилось записать' }).catch(() => {});
+    }
+  });
 
   // Commands in channel posts
   bot.on('channel_post:text', async (ctx) => {
@@ -41,9 +99,9 @@ export function createBot(): Bot {
       return;
     }
 
-    if (text === '/stats' || text.startsWith('/stats@')) {
-      logInfo('bot.channel_command', { command: '/stats', chatId, messageId: ctx.channelPost.message_id });
-      handleStatsCommand(ctx.api, chatId).catch(err => logError('bot.command.stats_failed', err, { chatId }));
+    if (text === '/veto' || text.startsWith('/veto ') || text.startsWith('/veto@')) {
+      logInfo('bot.channel_command', { command: '/veto', chatId, messageId: ctx.channelPost.message_id });
+      handleVetoCommand(ctx.api, chatId, text).catch(err => logError('bot.command.veto_failed', err, { chatId }));
       return;
     }
 
@@ -354,56 +412,39 @@ async function handleNewEntry(ctx: Context): Promise<void> {
   }
 }
 
-async function handleStatsCommand(api: import('grammy').Api, chatId: number): Promise<void> {
-  const strings = t();
-  const today = todayLocal();
-  const streak = queries.getStreak(today);
-  const total = queries.getTotalEntries();
+/**
+ * Standing "never raise this again" instructions.
+ *
+ * `/veto <текст>` records one, `/veto` lists them, `/veto -<id>` removes one. Every morning
+ * prompt carries the list verbatim. Without it the generator rediscovers a rejected idea a few
+ * weeks later, and each repeat says the refusal was never recorded.
+ */
+async function handleVetoCommand(api: import('grammy').Api, chatId: number, text: string): Promise<void> {
+  const arg = text.replace(/^\/veto(@\S+)?/, '').trim();
 
-  // Last 7 days metrics
-  const weekAgo = new Date();
-  weekAgo.setDate(weekAgo.getDate() - 6);
-  const startStr = formatDateLocal(weekAgo);
-  const avg = queries.getAverageMetrics(startStr, today);
-
-  const lines: string[] = [
-    `<b>${strings.statsHeader}</b>`,
-    '',
-    strings.statsStreak.replace('{streak}', String(streak)),
-    strings.statsTotalEntries.replace('{total}', String(total)),
-  ];
-
-  if (avg.count > 0) {
-    lines.push('');
-    lines.push(strings.statsMetricsForDays.replace('{days}', '7'));
-    if (avg.avgMood !== null) lines.push(strings.statsAvgMood.replace('{value}', avg.avgMood.toFixed(1)));
-    if (avg.avgAnxiety !== null) lines.push(strings.statsAvgAnxiety.replace('{value}', avg.avgAnxiety.toFixed(1)));
-    if (avg.avgStress !== null) lines.push(strings.statsAvgStress.replace('{value}', avg.avgStress.toFixed(1)));
-    if (avg.avgProductivity !== null) lines.push(strings.statsAvgProductivity.replace('{value}', avg.avgProductivity.toFixed(1)));
-    if (avg.avgRoutine !== null) lines.push(strings.statsAvgRoutine.replace('{value}', avg.avgRoutine.toFixed(1)));
-  } else {
-    lines.push('');
-    lines.push(strings.statsNoMetrics);
+  if (!arg) {
+    const vetoes = queries.getVetoes();
+    const body = vetoes.length === 0
+      ? 'Пока ничего не запрещено.\n\n<code>/veto текст</code> — запретить, <code>/veto -3</code> — снять запрет.'
+      : `<b>Никогда не поднимать</b>\n${vetoes.map((v) => `${v.id}. ${escapeHtml(v.text)}`).join('\n')}`;
+    await sendRawHtmlMessages(api, chatId, body);
+    return;
   }
 
-  // Last 7 days per-day metrics chart
-  const metrics = queries.getMetricsByDateRange(startStr, today);
-  if (metrics.length > 0) {
-    lines.push('');
-    for (const m of metrics) {
-      const parts: string[] = [];
-      if (m.mood !== null) parts.push(`M${m.mood}`);
-      if (m.anxiety !== null) parts.push(`A${m.anxiety}`);
-      if (m.stress !== null) parts.push(`S${m.stress}`);
-      if (m.productivity !== null) parts.push(`P${m.productivity}`);
-      if (m.routine !== null) parts.push(`R${m.routine}`);
-      if (parts.length) lines.push(`${m.date}: ${parts.join(' ')}`);
-    }
+  const removal = arg.match(/^-(\d+)$/);
+  if (removal) {
+    const id = Number(removal[1]);
+    const removed = queries.deleteVeto(id);
+    await sendRawHtmlMessages(api, chatId, removed ? `Снял запрет ${id}.` : `Запрета ${id} нет.`);
+    logInfo('bot.veto.removed', { id, removed });
+    return;
   }
 
-  const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `📊 ${strings.statsHeader}\n\n#bot`);
-  await sendRawHtmlMessages(api, target.chatId, lines.join('\n'), target.replyToMessageId);
+  const id = queries.insertVeto(arg);
+  await sendRawHtmlMessages(api, chatId, `Записал в чёрный список под номером ${id}. Больше не подниму.`);
+  logInfo('bot.veto.added', { id });
 }
+
 
 async function handleMemoryCommand(api: import('grammy').Api, chatId: number): Promise<void> {
   const memory = queries.getMemory();

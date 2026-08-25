@@ -158,7 +158,7 @@ async function generateDailyMemoryForDate(date: string, llm: LLMProvider): Promi
   if (!context || !sourceEntryId) return null;
 
   const start = Date.now();
-  const result = await llm.analyze(context, getDailyMemorySummaryPrompt(config.language));
+  const result = await llm.analyze(context, getDailyMemorySummaryPrompt());
   const parsed = parseJsonResponse<DailyMemorySummaryEnvelope>(result.text);
   const summary = sanitizeDailyMemorySummary(parsed?.summary ?? '');
 

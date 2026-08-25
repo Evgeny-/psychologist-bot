@@ -27,3 +27,12 @@ export function nowLocalTime(): string {
     hour12: false,
   });
 }
+
+/** Monday of the ISO week containing a YYYY-MM-DD date, as YYYY-MM-DD. */
+export function mondayOfWeek(date: string): string {
+  const [year, month, day] = date.split('-').map(Number);
+  const d = new Date(Date.UTC(year, month - 1, day));
+  const dayNum = (d.getUTCDay() + 6) % 7; // Mon=0 .. Sun=6
+  d.setUTCDate(d.getUTCDate() - dayNum);
+  return d.toISOString().split('T')[0];
+}

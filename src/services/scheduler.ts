@@ -71,8 +71,10 @@ export function startScheduler(api: Api): void {
   }, cronOptions);
 
   if (channelId) {
-    // Morning brief: every day at 08:00 → channel
-    cron.schedule('0 8 * * *', async () => {
+    // Morning credit: every day at 07:15 → channel. Earlier than the old 08:00 because it is
+    // read on the way to the laptop, not at it — and it stays silent on days with nothing to
+    // credit, so the schedule is a ceiling rather than a quota.
+    cron.schedule('15 7 * * *', async () => {
       try {
         logInfo('scheduler.morning.tick', { channelId });
         await generateMorningBrief(api, channelId);

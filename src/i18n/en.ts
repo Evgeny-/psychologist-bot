@@ -61,6 +61,7 @@ export const en = {
     productivity: 'prod',
     routine: 'rout',
   },
+  sayInsteadHeader: 'Say this out loud',
   metricNames: {
     mood: 'Mood',
     anxiety: 'Anxiety',

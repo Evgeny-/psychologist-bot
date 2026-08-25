@@ -31,6 +31,12 @@ interface ContractSignal {
   note?: string;
 }
 
+interface SayInstead {
+  quote?: string;
+  kind?: 'label' | 'should';
+  say?: string;
+}
+
 interface LabelReviewSignal {
   verdict?: 'yes' | 'no' | 'partly';
   note?: string;
@@ -65,6 +71,7 @@ interface AnalysisResult {
   thought_record?: ThoughtRecord | null;
   contract?: ContractSignal | null;
   label_review?: LabelReviewSignal | null;
+  say_instead?: SayInstead | null;
   credits?: string[];
   slot?: SlotSignal | null;
   closing_question?: string | null;
@@ -146,6 +153,10 @@ function saveAnalysis(entryId: number, response: ParsedAnalysisResponse, llm: LL
     closing_question: typeof parsed?.closing_question === 'string' && parsed.closing_question.trim()
       ? parsed.closing_question.trim()
       : undefined,
+    say_instead_json: (() => {
+      const valid = validSayInstead(parsed);
+      return valid ? JSON.stringify(valid) : undefined;
+    })(),
     gratitude_count: parsed?.gratitude_count ?? parsed?.gratitude?.length ?? 0,
     llm_provider: llm.providerName,
     llm_model: llm.modelName,
@@ -289,6 +300,43 @@ function formatUsage(usage?: LLMUsage): string {
 
 const escapeTg = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+/**
+ * The say-instead pair, but only when it is actually usable.
+ *
+ * Both halves have to be there: without the verbatim quote he cannot tell which of his own
+ * sentences is being answered, and without the replacement there is nothing to say out loud.
+ * The length cap is the same one the prompt states — a line he has to read is a line he will
+ * not say, and the whole point is that it gets spoken.
+ */
+function validSayInstead(parsed: AnalysisResult | null): { quote: string; kind: string; say: string } | null {
+  const raw = parsed?.say_instead;
+  const quote = typeof raw?.quote === 'string' ? raw.quote.trim() : '';
+  const say = typeof raw?.say === 'string' ? raw.say.trim() : '';
+  if (!quote || !say) return null;
+  if (say.split(/\s+/).length > 16) return null;
+  if (!refersToSelf(quote)) return null;
+  return { quote, kind: raw?.kind === 'should' ? 'should' : 'label', say };
+}
+
+/**
+ * Is the quoted sentence about the speaker at all?
+ *
+ * On the first run the model reached for this field on two entries where the harsh label was
+ * aimed at other people — strangers on a street, a partner during a fight. Answering those with
+ * a softer sentence to recite is the bot policing how he talks about other people, which is
+ * moralising and would cost the diary its use. The prompt forbids it; this is the backstop,
+ * and it is deliberately blunt: no first-person marker anywhere in the quote, no field.
+ */
+function refersToSelf(quote: string): boolean {
+  const boundary = (word: string) => `(?<![\\p{L}])${word}(?![\\p{L}])`;
+  // Reflexives are deliberately absent: Russian "себя" binds to whatever the subject is, so
+  // "ведут себя как обезьяны" is about them, not about him — the exact false positive this guard exists for.
+  const ru = ['я', 'мне', 'меня', 'мной', 'мой', 'моя', 'моё', 'мои'];
+  const en = ['i', 'me', 'my', 'myself'];
+  const re = new RegExp([...ru, ...en].map(boundary).join('|'), 'iu');
+  return re.test(quote);
+}
+
 function formatMetricsLine(metrics: ExtractedMetrics): string {
   const short = t().metricShort;
   const parts: Array<[string, number]> = [];
@@ -356,6 +404,22 @@ function buildContractAsk(date: string): { text: string; keyboard: InlineKeyboar
 }
 
 /**
+ * The line he is meant to say out loud, not read.
+ *
+ * His own sentence goes in the quote so he can recognise it; the replacement goes in bold
+ * underneath, because that is the half with a job to do. It is deliberately not nicer than what
+ * he said — repeating a sentence you do not believe produces counter-argument rather than
+ * comfort, which is the documented failure mode of positive self-statements. It is only more
+ * precise: this episode instead of the whole person, today instead of always.
+ */
+function formatSayInstead(parsed: AnalysisResult | null): string {
+  const item = validSayInstead(parsed);
+  if (!item) return '';
+  const s = t();
+  return `<b>${s.sayInsteadHeader}</b>\n<blockquote>${escapeTg(item.quote)}</blockquote>\n<b>${escapeTg(item.say)}</b>`;
+}
+
+/**
  * Compose the evening reply.
  *
  * Order is deliberate: the credit goes first because it is the only thing that shows up in the
@@ -372,6 +436,7 @@ export function renderAnalysisMessage(
     formatCredit(parsed),
     markdownToHtml(freeform),
     formatDistortions(parsed),
+    formatSayInstead(parsed),
     formatMetricsLine(metrics),
   ].filter((b) => b.trim());
   return blocks.join('\n\n');
@@ -451,6 +516,36 @@ function buildAlreadyAskedBlock(): string | null {
   }
 }
 
+/**
+ * How to address the user in the say-instead line.
+ *
+ * The name lives in the server environment, never in the repository, and never in the prompt
+ * constant — it is user data. With no name configured the prompt falls back to plain second
+ * person, which still carries most of the distancing effect.
+ */
+function buildAddressBlock(): string | null {
+  const name = config.userName.trim();
+  if (!name) return null;
+  return config.language === 'ru'
+    ? `--- ОБРАЩЕНИЕ: ${name} ---`
+    : `--- ADDRESS: ${name} ---`;
+}
+
+/** Replacements already offered, so the same sentence is not handed back every evening. */
+function buildAlreadyOfferedBlock(): string | null {
+  try {
+    const recent = queries.getRecentSayInstead(10);
+    if (recent.length === 0) return null;
+    const header = config.language === 'ru'
+      ? '--- УЖЕ ПРЕДЛАГАЛ (не повторяй эти замены) ---'
+      : '--- ALREADY OFFERED (do not repeat these replacements) ---';
+    return `${header}\n${recent.map((r) => `- «${r.quote}» → «${r.say}»`).join('\n')}`;
+  } catch (err) {
+    logWarn('analysis.context.already_offered_failed', { reason: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
 function buildYesterdayIntentionsBlock(yesterday: string): string | null {
   try {
     const items = queries.getActionItemsForDate(yesterday).slice(0, 5);
@@ -503,7 +598,11 @@ export async function buildUserPromptWithContext(
   if (patternBlock) sections.push(patternBlock);
 
   const alreadyAskedBlock = buildAlreadyAskedBlock();
+  const addressBlock = buildAddressBlock();
+  const alreadyOfferedBlock = buildAlreadyOfferedBlock();
   if (alreadyAskedBlock) sections.push(alreadyAskedBlock);
+  if (addressBlock) sections.push(addressBlock);
+  if (alreadyOfferedBlock) sections.push(alreadyOfferedBlock);
 
   if (orbitContextEnabled) {
     const orbitBlock = buildOrbitContextBlock(date, entryId);

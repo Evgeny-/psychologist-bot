@@ -47,6 +47,9 @@ export const config = {
   compareMode: process.env.COMPARE_MODE === 'true',
 
   language: (process.env.BOT_LANGUAGE || 'ru') as BotLanguage,
+  // Used only to address the user by name in the say-instead line. Self-distancing works better
+  // with a name than with "you", and the name never enters the repository — only the server .env.
+  userName: process.env.BOT_USER_NAME || '',
 
   timezone: process.env.BOT_TIMEZONE || 'Europe/Moscow',
 

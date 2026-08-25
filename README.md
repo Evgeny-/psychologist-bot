@@ -18,6 +18,7 @@ Multiple entries per day? The bot sees your earlier entries as reference, so it 
 - **Morning credit** — the morning message names one thing you actually did yesterday, quoted verbatim, and asks one question with one row of buttons: was that how it went? It is not a task. On days with nothing worth crediting the bot sends nothing at all — silence is a supported outcome, not a failure
 - **Daily contract** — one binary commitment per day: a single live contact with a person. The evening entry usually answers it by itself; the buttons only appear when it didn't. The week's count shows up in the weekly report. Binary on purpose — a target that can be met "in spirit" always is
 - **Label review** — a verbatim label from yesterday evening is read back the next morning with one question: still true — yes / no / partly. No arguing, just a counter of how many evening verdicts survive the morning. Used on the mornings where there is no credit to give
+- **Say this out loud** — when an entry carries a charged verdict about yourself ("I have problems with this", "I should have"), the reply quotes it back and offers one short sentence to say instead. Not the opposite of what you said — repeating a sentence you don't believe produces counter-argument rather than comfort — only a more precise one: this episode instead of the whole person, today instead of always. Second person, by name when `BOT_USER_NAME` is set. Never fires on statements about other people
 - **Vetoes** — `/veto <text>` permanently blacklists a topic or phrasing. The list goes into every morning prompt verbatim and never expires; `/veto` lists them, `/veto -3` removes one
 - **Weekly slot** — instead of assigning an exercise, the weekly report asks a single question: which slot did you book or pay for this week (date, time, person, amount). Slots are only recorded when a real commitment is named in an entry
 - **External credits** — reactions from other people are stored separately from your own wins, and listed back in the weekly report
@@ -81,6 +82,7 @@ Key ones:
 - `TTS_PROVIDER` — `elevenlabs` or `openai`
 - `COMPARE_MODE=true` — run all LLM providers in parallel
 - `BOT_LANGUAGE` — `ru` or `en`. Covers both halves: every system prompt has a Russian and an English variant, and all bot-facing text (buttons, callback toasts, headings, report titles) comes from `src/i18n/`. Adding a user-facing string means adding it to `ru.ts`, `en.ts` and the `Strings` interface — never inline it in a service.
+- `BOT_USER_NAME` — optional first name, used only to address you in the say-this-out-loud line. Left unset, it falls back to plain second person
 - `BOT_TIMEZONE` — for correct date calculations (e.g. `Europe/Amsterdam`)
 
 Scheduled jobs use `BOT_TIMEZONE`, including the daily morning credit at 07:15 (which stays silent on days with nothing to credit).

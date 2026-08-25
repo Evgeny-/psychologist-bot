@@ -174,13 +174,14 @@ export class Queries {
     wins_json?: string;
     orbit_themes_json?: string;
     closing_question?: string;
+    say_instead_json?: string;
     gratitude_count?: number;
     llm_provider?: string;
     llm_model?: string;
   }): number {
     const stmt = this.db.prepare(`
-      INSERT INTO analyses (entry_id, analysis_text, sentiment, distortions_json, topics_json, action_items_json, emotions_json, triggers_json, wins_json, orbit_themes_json, closing_question, gratitude_count, llm_provider, llm_model)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO analyses (entry_id, analysis_text, sentiment, distortions_json, topics_json, action_items_json, emotions_json, triggers_json, wins_json, orbit_themes_json, closing_question, say_instead_json, gratitude_count, llm_provider, llm_model)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       analysis.entry_id,
@@ -194,6 +195,7 @@ export class Queries {
       analysis.wins_json ?? null,
       analysis.orbit_themes_json ?? null,
       analysis.closing_question ?? null,
+      analysis.say_instead_json ?? null,
       analysis.gratitude_count ?? 0,
       analysis.llm_provider ?? null,
       analysis.llm_model ?? null,
@@ -668,6 +670,31 @@ export class Queries {
   getCreditsByDateRange(start: string, end: string): Array<{ date: string; text: string }> {
     return this.db.prepare('SELECT date, text FROM credits WHERE date BETWEEN ? AND ? ORDER BY date ASC, id ASC')
       .all(start, end) as Array<{ date: string; text: string }>;
+  }
+
+  /**
+   * Recent say-instead lines, so the prompt can avoid re-offering one.
+   *
+   * The same alternative sentence handed back every evening stops being a sentence and becomes
+   * wallpaper — the exact failure the morning brief died of.
+   */
+  getRecentSayInstead(limit: number): Array<{ quote: string; say: string }> {
+    const rows = this.db.prepare(`
+      SELECT say_instead_json AS j FROM analyses
+      WHERE say_instead_json IS NOT NULL AND say_instead_json != ''
+        AND id IN (SELECT MIN(id) FROM analyses GROUP BY entry_id)
+      ORDER BY id DESC LIMIT ?
+    `).all(limit) as Array<{ j: string }>;
+    const out: Array<{ quote: string; say: string }> = [];
+    for (const r of rows) {
+      try {
+        const parsed = JSON.parse(r.j);
+        if (parsed && typeof parsed.quote === 'string' && typeof parsed.say === 'string') {
+          out.push({ quote: parsed.quote, say: parsed.say });
+        }
+      } catch { /* malformed row, skip */ }
+    }
+    return out;
   }
 
   /** Recently asked closing questions, so the next prompt can refuse to repeat them. */

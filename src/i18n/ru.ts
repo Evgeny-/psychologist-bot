@@ -61,6 +61,7 @@ export const ru = {
     productivity: 'прод',
     routine: 'рут',
   },
+  sayInsteadHeader: 'Скажи это вслух',
   metricNames: {
     mood: 'Настроение',
     anxiety: 'Тревога',

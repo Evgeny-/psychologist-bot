@@ -58,6 +58,7 @@ export interface Strings {
     productivity: string;
     routine: string;
   };
+  sayInsteadHeader: string;
   metricNames: {
     mood: string;
     anxiety: string;

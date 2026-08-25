@@ -79,6 +79,13 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
     try { db.exec("ALTER TABLE analyses ADD COLUMN closing_question TEXT"); } catch { /* table may not exist yet */ }
   }
 
+  // Migration: the sayable alternative to a self-directed verdict. Stored so the prompt can see
+  // what it already offered — offering the same sentence every evening turns it into wallpaper.
+  const hasSayInstead = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('analyses') WHERE name='say_instead_json'").get() as { cnt: number };
+  if (hasSayInstead.cnt === 0) {
+    try { db.exec("ALTER TABLE analyses ADD COLUMN say_instead_json TEXT"); } catch { /* table may not exist yet */ }
+  }
+
   // Migration: entry provenance — 'live' (telegram) vs 'archive' (imported past diaries)
   const hasSource = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('entries') WHERE name='source'").get() as { cnt: number };
   if (hasSource.cnt === 0) {
@@ -113,6 +120,7 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
       wins_json TEXT,
       orbit_themes_json TEXT,
       closing_question TEXT,
+      say_instead_json TEXT,
       gratitude_count INTEGER DEFAULT 0,
       llm_provider TEXT,
       llm_model TEXT,

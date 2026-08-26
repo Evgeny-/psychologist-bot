@@ -87,6 +87,8 @@ Key ones:
 
 Scheduled jobs use `BOT_TIMEZONE`, including the daily morning credit at 07:15 (which stays silent on days with nothing to credit).
 
+`EVENING_FROM_HOUR` in `src/config.ts` is the hour from which an entry counts as summing the day up. Two things read it and must not drift apart: the 20:30 reminder skips days that already have an entry from that hour on, and the daily prompt refuses to infer metrics from a word description written earlier — mornings describe a day not yet lived.
+
 Runtime logs are written both to stdout/journald and to `logs/app.log` in logfmt-style single-line entries, so stage timings can be grepped without digging through raw stack traces.
 
 For voice replies:

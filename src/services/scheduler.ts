@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import type { Api } from 'grammy';
-import { config } from '../config.js';
+import { config, EVENING_FROM_HOUR } from '../config.js';
 import { queries } from '../db/index.js';
 import { t } from '../i18n/index.js';
 import { todayLocal } from '../utils/date.js';
@@ -26,9 +26,6 @@ export function startScheduler(api: Api): void {
   // One source of truth per job. The startup log used to hand-copy these strings and drifted:
   // it still announced the morning at 08:00 for a release that had already moved it to 07:15,
   // and the log is exactly where you look to check when something fires.
-  // Entries at or after this hour count as closing the day out.
-  const EVENING_FROM_HOUR = 17;
-
   const SCHEDULE = {
     reminder: '30 20 * * *',
     consolidation: '55 23 * * *',

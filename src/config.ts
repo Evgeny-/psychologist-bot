@@ -3,6 +3,16 @@ import 'dotenv/config';
 export type ASRProviderType = 'elevenlabs' | 'openai';
 export type LLMProviderType = 'claude' | 'openai';
 export type TTSProviderType = 'elevenlabs' | 'openai';
+/**
+ * The hour from which an entry counts as summing the day up.
+ *
+ * Two things hang off it and must not drift apart: the evening reminder skips days that already
+ * have an entry from this hour on, and the daily prompt refuses to infer metrics from a word
+ * description written before it. An entry that closes the day for one and not the other would be
+ * incoherent, so both read this constant — the prompt interpolates it rather than restating it.
+ */
+export const EVENING_FROM_HOUR = 15;
+
 export type BotLanguage = 'ru' | 'en';
 
 function required(name: string): string {

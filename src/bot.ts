@@ -64,7 +64,7 @@ export function createBot(): Bot {
       const message = ctx.callbackQuery.message;
       const original = message && 'text' in message ? message.text ?? '' : '';
       const entities = message && 'entities' in message ? message.entities ?? [] : [];
-      const suffix = answeredLine(payload.value, nowLocalTime());
+      const suffix = answeredLine(payload.kind, payload.value, nowLocalTime());
       const updated = original ? `${original}\n\n${suffix}` : suffix;
       await ctx.editMessageText(updated, {
         entities: [...entities, { type: 'italic' as const, offset: updated.length - suffix.length, length: suffix.length }],
@@ -479,7 +479,7 @@ async function handleExportCommand(api: import('grammy').Api, chatId: number): P
   const csv = [csvHeader, ...rows].join('\n');
   const buffer = Buffer.from(csv, 'utf-8');
 
-  const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `📤 Export: ${data.length} entries\n\n#bot`);
+  const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `📤 Export: ${data.length} entries`);
   await api.sendDocument(target.chatId, new InputFile(buffer, 'cbt-export.csv'), {
     reply_to_message_id: target.replyToMessageId,
   });

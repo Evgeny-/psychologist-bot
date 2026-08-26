@@ -284,6 +284,21 @@ export class Queries {
     return row?.date ?? null;
   }
 
+  /**
+   * Was the day closed out, rather than merely written in?
+   *
+   * The reminder used to skip any day that had an entry at all, which silenced it on exactly the
+   * days it was needed: a morning entry marked the day as done, and the evening — where the
+   * metrics and the day's summing-up actually come from — was never asked for. Only 10 of 188
+   * metric rows come from before 14:00, so a morning entry is not a substitute for an evening one.
+   */
+  hasEntryForDateFromHour(date: string, fromHour: number): boolean {
+    const row = this.db.prepare(
+      "SELECT 1 FROM entries WHERE date = ? AND CAST(substr(COALESCE(local_time, '12:00'), 1, 2) AS INTEGER) >= ? LIMIT 1"
+    ).get(date, fromHour);
+    return !!row;
+  }
+
   hasEntryForDate(date: string): boolean {
     const row = this.db.prepare(
       'SELECT 1 FROM entries WHERE date = ? LIMIT 1'

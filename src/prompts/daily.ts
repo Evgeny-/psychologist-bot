@@ -86,6 +86,8 @@ ${renderOrbitTaxonomy('ru')}
 Если пользователь сказал "настроение на 7" или "тревога зашкаливает, на 9 из 10" — используй его оценку.
 Если пользователь описал состояние словами без числа ("настроение отличное") — переведи в число.
 НЕ угадывай метрики по контексту. Если пользователь не упоминал конкретную метрику — ставь null.
+ВРЕМЯ ЗАПИСИ (см. [Время записи] в контексте): в записи РАНЬШЕ 17:00 заполняй metrics только если он назвал число явно. Утром он описывает, что происходит, а не подводит итог прожитому дню, и выведенное из утра число встанет в график рядом с вечерними, которые он ставил осознанно.
+Проходная реплика — не оценка. «Всё нормально себя чувствую», брошенное посреди рассуждений о работе, после чего он идёт дальше, — это связка в речи, а не отчёт о состоянии. Оценка — когда он подводит итог: «день был тяжёлый», «весь день на нервах».
 
 Поле "daily_memory_summary": внутренняя краткосрочная память о ДНЕ, не ответ пользователю.
 - 3-6 предложений, до ${DAILY_MEMORY_SUMMARY_MAX_LENGTH} символов; в насыщенный день пиши подробнее, но без воды
@@ -313,6 +315,8 @@ The "metrics" field: fill in ONLY if the user explicitly assessed their own stat
 - routine: how much of the daily routine was done — walk, warm-up, exercise, chores (0 = none, 10 = all of it)
 If they said "mood is 7" — use it. If described in words ("mood is great") — translate to a number.
 Do NOT guess metrics from context. Not mentioned — null.
+ENTRY TIME (see [Entry time] in the context): in an entry BEFORE 17:00, fill metrics only if they named a number outright. In the morning they describe what is happening rather than sum up a day they have not lived yet, and a number inferred from the morning would sit on the chart beside evening ones they set deliberately.
+A passing remark is not a rating. "I feel fine", dropped in the middle of talking about work and followed by moving straight on, is a verbal connective, not a report on their state. A rating is when they sum up: "it was a hard day", "on edge all day".
 
 The "daily_memory_summary" field: internal short-term memory about the DAY, not a user-facing reply.
 - 3-6 sentences, up to ${DAILY_MEMORY_SUMMARY_MAX_LENGTH} characters; more detail on an eventful day, no filler

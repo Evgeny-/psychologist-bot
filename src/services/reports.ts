@@ -541,7 +541,7 @@ async function runWeeklyReport(
     .replace('{end}', endStr);
 
   // Post short header to channel, get comment target for full content
-  const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `${title}\n\n#bot`);
+  const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, title);
 
   // Attach a 30-day metrics chart under the header (never blocks the text report)
   await sendMetricsChart(api, target, endStr);
@@ -742,7 +742,7 @@ async function runMonthlyReport(
     .replace('{end}', endStr);
 
   // Post short header to channel, get comment target for full content
-  const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `${title}\n\n#bot`);
+  const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, title);
 
   // Attach a 30-day metrics chart under the header (never blocks the text report)
   await sendMetricsChart(api, target, endStr);
@@ -1139,7 +1139,7 @@ async function updateMemoryFromReport(api: Api, chatId: number): Promise<void> {
     const headerText = config.language === 'ru'
       ? `🧠 Память обновлена${costInfo}`
       : `🧠 Memory updated${costInfo}`;
-    const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `${headerText}\n\n#bot`);
+    const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, headerText);
     await sendRawHtmlMessages(api, target.chatId, newMemory, target.replyToMessageId);
     logInfo('memory.auto_update.complete', {
       chatId,
@@ -1208,7 +1208,7 @@ export async function generateMemory(api: Api, chatId: number): Promise<void> {
     const headerText = config.language === 'ru'
       ? `🧠 Память сгенерирована${costInfo}`
       : `🧠 Memory generated${costInfo}`;
-    const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, `${headerText}\n\n#bot`);
+    const target = await postChannelHeader(api, chatId, config.telegram.discussionGroupId, headerText);
     await sendRawHtmlMessages(api, target.chatId, newMemory, target.replyToMessageId);
     logInfo('memory.generate.complete', {
       chatId,

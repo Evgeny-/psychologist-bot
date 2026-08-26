@@ -26,6 +26,9 @@ export function startScheduler(api: Api): void {
   // One source of truth per job. The startup log used to hand-copy these strings and drifted:
   // it still announced the morning at 08:00 for a release that had already moved it to 07:15,
   // and the log is exactly where you look to check when something fires.
+  // Entries at or after this hour count as closing the day out.
+  const EVENING_FROM_HOUR = 17;
+
   const SCHEDULE = {
     reminder: '30 20 * * *',
     consolidation: '55 23 * * *',
@@ -41,8 +44,8 @@ export function startScheduler(api: Api): void {
     cron.schedule(SCHEDULE.reminder, async () => {
       try {
         const today = todayLocal();
-        if (queries.hasEntryForDate(today)) {
-          logInfo('scheduler.reminder.skip_has_entry', { today, reminderChatId });
+        if (queries.hasEntryForDateFromHour(today, EVENING_FROM_HOUR)) {
+          logInfo('scheduler.reminder.skip_has_evening_entry', { today, reminderChatId });
           return;
         }
 
@@ -50,8 +53,15 @@ export function startScheduler(api: Api): void {
         const strings = t();
         const streak = queries.getStreak();
 
+        // A day with a morning entry but no evening one is not a missed day, and calling it one
+        // reads as the bot not having listened. It is a day that was never summed up — and the
+        // metrics only ever come from the summing-up.
+        const wroteEarlier = queries.hasEntryForDate(today);
+
         let message: string;
-        if (days <= 1) {
+        if (wroteEarlier) {
+          message = strings.reminderEveningPending;
+        } else if (days <= 1) {
           message = strings.reminderDay1;
         } else {
           message = strings.reminderDay2plus.replace('{days}', String(days));

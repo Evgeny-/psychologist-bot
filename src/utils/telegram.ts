@@ -376,13 +376,29 @@ export interface CommentTarget {
  * If discussionGroupId is set, waits for the auto-forwarded message and returns the group + thread ID.
  * Falls back to posting directly to the channel on timeout or if no group is configured.
  */
+export const BOT_TAG = '#bot';
+
+/**
+ * Telegram auto-forwards a channel post into the linked discussion group, where it arrives as an
+ * ordinary message — so anything the bot posts to the channel comes back to it looking exactly
+ * like a new diary entry. The `#bot` tag is what the group handler filters on.
+ *
+ * Tagging is done here rather than by the caller because forgetting it is silent and expensive:
+ * it cost a self-analysed entry in July, and again when the morning header shipped untagged. A
+ * rule every call site has to remember is a rule that gets forgotten, so the one function that
+ * posts to the channel now guarantees it.
+ */
+function withBotTag(html: string): string {
+  return html.includes(BOT_TAG) ? html : `${html}\n\n${BOT_TAG}`;
+}
+
 export async function postChannelHeader(
   api: Api,
   channelId: number,
   groupId: number | undefined,
   headerHtml: string,
 ): Promise<CommentTarget> {
-  const channelMsg = await api.sendMessage(channelId, headerHtml, { parse_mode: 'HTML' });
+  const channelMsg = await api.sendMessage(channelId, withBotTag(headerHtml), { parse_mode: 'HTML' });
   logInfo('telegram.channel_header.sent', {
     channelId,
     groupId,

@@ -68,11 +68,15 @@ export function creditKeyboard(date: string): InlineKeyboard {
 /**
  * Replaces the keyboard after an answer, so the record shows what was answered and when.
  *
+ * Keyed by kind as well as value: "yes" means "still true" on a label and "that is how it went"
+ * on a credit, and keying by value alone made a tap on "Так и было" record itself as "всё ещё
+ * так" — the record contradicted the button that produced it.
+ *
  * Plain text on purpose. The edit re-sends the original message with its original entities
  * rather than re-parsing it, because `message.text` arrives stripped of formatting — rendering
  * it as HTML again would flatten every blockquote the message was built from.
  */
-export function answeredLine(value: string, timeHHMM: string): string {
+export function answeredLine(kind: CallbackKind, value: string, timeHHMM: string): string {
   const s = t();
-  return `${s.answeredPrefix}: ${s.answerLabels[value] ?? value}, ${timeHHMM}`;
+  return `${s.answeredPrefix}: ${s.answerLabels[kind]?.[value] ?? value}, ${timeHHMM}`;
 }

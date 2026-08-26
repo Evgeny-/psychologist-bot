@@ -10,6 +10,7 @@ export interface Strings {
   errorGeneric: string;
   errorApiBalance: string;
   errorApiGeneric: string;
+  reminderEveningPending: string;
   reminderDay1: string;
   reminderDay2plus: string;
   weeklyReportTitle: string;
@@ -38,7 +39,7 @@ export interface Strings {
   btnCreditNo: string;
   btnCreditUnsure: string;
   answeredPrefix: string;
-  answerLabels: Record<string, string>;
+  answerLabels: Record<string, Record<string, string>>;
   toastSaved: string;
   toastDropped: string;
   toastForeignButton: string;

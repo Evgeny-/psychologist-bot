@@ -205,9 +205,9 @@ function buildCreditContextBlock(yesterday: string): string {
       const label = ru
         ? 'УЖЕ ЗАСЧИТАНО РАНЬШЕ — не засчитывай то же самое ещё раз, если это не заметно более трудный случай'
         : 'ALREADY CREDITED BEFORE — do not credit the same thing again unless this instance was markedly harder';
-      const disputed = ru ? ' (этот зачёт он оспорил)' : ' (this credit was disputed)';
+      const noticedSelf = ru ? ' (это он заметил и сам)' : ' (he had noticed this one himself)';
       parts.push(`${label}:\n${
-        already.map((c) => `- [${c.date}] «${c.quote}» — ${c.skill}${c.verdict === 'no' ? disputed : ''}`).join('\n')}`);
+        already.map((c) => `- [${c.date}] «${c.quote}» — ${c.skill}${c.noticed === 'self' ? noticedSelf : ''}`).join('\n')}`);
     }
   } catch { /* fail-soft */ }
 
@@ -223,8 +223,8 @@ function buildCreditContextBlock(yesterday: string): string {
   try {
     const stats = queries.getMorningCreditStats();
     parts.push(ru
-      ? `Как он отвечал на прошлые зачёты: подтвердил ${stats.yes}, оспорил ${stats.no}, не вспомнил ${stats.unsure}, не ответил ${stats.unanswered}.`
-      : `How past credits were answered: confirmed ${stats.yes}, disputed ${stats.no}, could not recall ${stats.unsure}, no answer ${stats.unanswered}.`);
+      ? `Замечал ли он прошлые зачёты сам: сам ${stats.self}, узнал от бота ${stats.told}, не ответил ${stats.unanswered}.`
+      : `Did he already count past credits himself: on his own ${stats.self}, learned from the bot ${stats.told}, no answer ${stats.unanswered}.`);
   } catch { /* fail-soft */ }
 
   const veto = buildVetoBlock();
@@ -610,16 +610,19 @@ function buildMonthlyMechanicsContext(startStr: string, endStr: string): string 
     const confirmed = queries.getConfirmedMorningCredits(startStr, endStr);
     if (confirmed.length) {
       const label = ru
-        ? `Зачёты, которые он сам подтвердил кнопкой (дословно, ${confirmed.length} шт.)`
-        : `Credits confirmed with a tap (verbatim, ${confirmed.length})`;
-      parts.push(`${label}:\n${confirmed.map((c) => `- ${c.date}: «${c.quote}» — ${c.skill}`).join('\n')}`);
+        ? `Зачёты, на которые он ответил кнопкой (дословно, ${confirmed.length} шт.; «сам» = заметил без бота)`
+        : `Credits he answered with a tap (verbatim, ${confirmed.length}; "self" = noticed without the bot)`;
+      parts.push(`${label}:\n${confirmed.map((c) => {
+        const mark = c.noticed === 'self' ? (ru ? ' [сам]' : ' [self]') : c.noticed === 'told' ? (ru ? ' [от бота]' : ' [told]') : '';
+        return `- ${c.date}: «${c.quote}» — ${c.skill}${mark}`;
+      }).join('\n')}`);
     } else {
       parts.push(ru ? 'Подтверждённых зачётов за месяц нет.' : 'No confirmed credits this month.');
     }
     const stats = queries.getMorningCreditStatsByRange(startStr, endStr);
     parts.push(ru
-      ? `Зачёты за месяц: подтвердил ${stats.yes}, оспорил ${stats.no}, не вспомнил ${stats.unsure}, не ответил ${stats.unanswered}.`
-      : `Credits this month: confirmed ${stats.yes}, disputed ${stats.no}, could not recall ${stats.unsure}, no answer ${stats.unanswered}.`);
+      ? `Зачёты за месяц: заметил сам ${stats.self}, узнал от бота ${stats.told}, не ответил ${stats.unanswered}.`
+      : `Credits this month: noticed on his own ${stats.self}, learned from the bot ${stats.told}, no answer ${stats.unanswered}.`);
   } catch (err) {
     logWarn('report.monthly.credit_context_failed', { reason: err instanceof Error ? err.message : String(err) });
   }

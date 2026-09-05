@@ -48,7 +48,7 @@ export function createBot(): Bot {
       } else if (payload.kind === 'ctr') {
         queries.resolveContract(payload.ref, { status: payload.value as 'done' | 'missed' });
       } else if (payload.kind === 'cred') {
-        queries.answerMorningCredit(payload.ref, payload.value as 'yes' | 'no' | 'unsure');
+        queries.answerMorningCredit(payload.ref, payload.value as 'self' | 'told');
       }
 
       logInfo('bot.callback.answered', { kind: payload.kind, ref: payload.ref, value: payload.value, fromId });

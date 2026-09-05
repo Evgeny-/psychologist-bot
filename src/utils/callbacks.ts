@@ -56,13 +56,19 @@ export function contractKeyboard(date: string): InlineKeyboard {
     .text(s.btnContractMissed, encodeCallback({ kind: 'ctr', ref: date, value: 'missed' }));
 }
 
-/** The credit for yesterday — the message that replaced the morning task. */
+/**
+ * The credit for yesterday.
+ *
+ * The question used to be whether the credit was accurate, and it was answered yes four times
+ * out of four within minutes — the caption even repeated the question word for word. It now asks
+ * the one thing neither of us knows in advance: whether the reinforcement had already landed
+ * without the bot pointing at it. That is the variable this whole mechanic exists to move.
+ */
 export function creditKeyboard(date: string): InlineKeyboard {
   const s = t();
   return new InlineKeyboard()
-    .text(s.btnCreditYes, encodeCallback({ kind: 'cred', ref: date, value: 'yes' }))
-    .text(s.btnCreditNo, encodeCallback({ kind: 'cred', ref: date, value: 'no' }))
-    .text(s.btnCreditUnsure, encodeCallback({ kind: 'cred', ref: date, value: 'unsure' }));
+    .text(s.btnCreditSelf, encodeCallback({ kind: 'cred', ref: date, value: 'self' }))
+    .text(s.btnCreditTold, encodeCallback({ kind: 'cred', ref: date, value: 'told' }));
 }
 
 /**

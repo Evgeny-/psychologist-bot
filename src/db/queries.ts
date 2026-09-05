@@ -726,9 +726,9 @@ export class Queries {
 
   // --- Morning credits: the credit-for-yesterday that replaced the morning task ---
 
-  getMorningCredit(date: string): { date: string; source_date: string; quote: string | null; verdict: string | null } | null {
-    const row = this.db.prepare('SELECT date, source_date, quote, verdict FROM morning_credits WHERE date = ?').get(date) as
-      { date: string; source_date: string; quote: string | null; verdict: string | null } | undefined;
+  getMorningCredit(date: string): { date: string; source_date: string; quote: string | null; noticed: string | null } | null {
+    const row = this.db.prepare('SELECT date, source_date, quote, noticed FROM morning_credits WHERE date = ?').get(date) as
+      { date: string; source_date: string; quote: string | null; noticed: string | null } | undefined;
     return row ?? null;
   }
 
@@ -747,51 +747,58 @@ export class Queries {
            credit.counter ?? null, credit.message_id ?? null);
   }
 
-  answerMorningCredit(date: string, verdict: 'yes' | 'no' | 'unsure'): void {
-    this.db.prepare("UPDATE morning_credits SET verdict = ?, answered_at = datetime('now') WHERE date = ?").run(verdict, date);
+  /**
+   * Record whether he had already counted yesterday's action himself.
+   *
+   * Replaces the old "did this happen" verdict, which was answered yes four times out of four
+   * within minutes — an answer known in advance is not an answer. This one can genuinely go
+   * either way, and it measures the thing the whole mechanic exists for: whether the
+   * reinforcement is starting to land without the bot pointing at it.
+   */
+  answerMorningCredit(date: string, noticed: 'self' | 'told'): void {
+    this.db.prepare("UPDATE morning_credits SET noticed = ?, answered_at = datetime('now') WHERE date = ?").run(noticed, date);
   }
 
-  /** How many credits he confirmed, disputed or could not recall — his own counter, not an argument. */
-  getMorningCreditStats(): { yes: number; no: number; unsure: number; unanswered: number } {
+  /** How often he had already counted it himself — his own counter, not an argument. */
+  getMorningCreditStats(): { self: number; told: number; unanswered: number } {
     const row = this.db.prepare(`
       SELECT
-        SUM(CASE WHEN verdict = 'yes' THEN 1 ELSE 0 END) as yes,
-        SUM(CASE WHEN verdict = 'no' THEN 1 ELSE 0 END) as no,
-        SUM(CASE WHEN verdict = 'unsure' THEN 1 ELSE 0 END) as unsure,
-        SUM(CASE WHEN verdict IS NULL THEN 1 ELSE 0 END) as unanswered
+        SUM(CASE WHEN noticed = 'self' THEN 1 ELSE 0 END) as self,
+        SUM(CASE WHEN noticed = 'told' THEN 1 ELSE 0 END) as told,
+        SUM(CASE WHEN noticed IS NULL THEN 1 ELSE 0 END) as unanswered
       FROM morning_credits
-    `).get() as { yes: number | null; no: number | null; unsure: number | null; unanswered: number | null };
-    return { yes: row?.yes ?? 0, no: row?.no ?? 0, unsure: row?.unsure ?? 0, unanswered: row?.unanswered ?? 0 };
+    `).get() as { self: number | null; told: number | null; unanswered: number | null };
+    return { self: row?.self ?? 0, told: row?.told ?? 0, unanswered: row?.unanswered ?? 0 };
   }
 
   /** What was already credited, so a morning does not credit the same walk three times running. */
-  getRecentMorningCredits(limit: number): Array<{ date: string; quote: string; skill: string; verdict: string | null }> {
+  getRecentMorningCredits(limit: number): Array<{ date: string; quote: string; skill: string; noticed: string | null }> {
     return this.db.prepare(`
-      SELECT date, quote, skill, verdict FROM morning_credits
+      SELECT date, quote, skill, noticed FROM morning_credits
       WHERE quote IS NOT NULL AND skill IS NOT NULL
       ORDER BY date DESC LIMIT ?
-    `).all(limit) as Array<{ date: string; quote: string; skill: string; verdict: string | null }>;
+    `).all(limit) as Array<{ date: string; quote: string; skill: string; noticed: string | null }>;
   }
 
   /** Credits he confirmed with a tap — the only ones a report may repeat back as fact. */
-  getConfirmedMorningCredits(start: string, end: string): Array<{ date: string; quote: string; skill: string }> {
+  getConfirmedMorningCredits(start: string, end: string): Array<{ date: string; quote: string; skill: string; noticed: string | null }> {
     return this.db.prepare(`
-      SELECT date, quote, skill FROM morning_credits
-      WHERE verdict = 'yes' AND quote IS NOT NULL AND skill IS NOT NULL AND date BETWEEN ? AND ?
+      SELECT date, quote, skill, noticed FROM morning_credits
+      WHERE (noticed IS NOT NULL OR verdict = 'yes') AND quote IS NOT NULL AND skill IS NOT NULL
+        AND date BETWEEN ? AND ?
       ORDER BY date ASC
-    `).all(start, end) as Array<{ date: string; quote: string; skill: string }>;
+    `).all(start, end) as Array<{ date: string; quote: string; skill: string; noticed: string | null }>;
   }
 
-  getMorningCreditStatsByRange(start: string, end: string): { yes: number; no: number; unsure: number; unanswered: number } {
+  getMorningCreditStatsByRange(start: string, end: string): { self: number; told: number; unanswered: number } {
     const row = this.db.prepare(`
       SELECT
-        SUM(CASE WHEN verdict = 'yes' THEN 1 ELSE 0 END) as yes,
-        SUM(CASE WHEN verdict = 'no' THEN 1 ELSE 0 END) as no,
-        SUM(CASE WHEN verdict = 'unsure' THEN 1 ELSE 0 END) as unsure,
-        SUM(CASE WHEN verdict IS NULL THEN 1 ELSE 0 END) as unanswered
+        SUM(CASE WHEN noticed = 'self' THEN 1 ELSE 0 END) as self,
+        SUM(CASE WHEN noticed = 'told' THEN 1 ELSE 0 END) as told,
+        SUM(CASE WHEN noticed IS NULL THEN 1 ELSE 0 END) as unanswered
       FROM morning_credits WHERE date BETWEEN ? AND ?
-    `).get(start, end) as { yes: number | null; no: number | null; unsure: number | null; unanswered: number | null };
-    return { yes: row?.yes ?? 0, no: row?.no ?? 0, unsure: row?.unsure ?? 0, unanswered: row?.unanswered ?? 0 };
+    `).get(start, end) as { self: number | null; told: number | null; unanswered: number | null };
+    return { self: row?.self ?? 0, told: row?.told ?? 0, unanswered: row?.unanswered ?? 0 };
   }
 
   /** Wins recorded by the evening analysis — the raw material a morning credit is built from. */

@@ -86,6 +86,15 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
     try { db.exec("ALTER TABLE analyses ADD COLUMN say_instead_json TEXT"); } catch { /* table may not exist yet */ }
   }
 
+  // Migration: the morning question changed from "did this happen" — which was answered yes four
+  // times out of four within minutes, carrying no information — to whether he had already counted
+  // it himself. A separate column because the answers mean different things: the old verdict says
+  // the credit was accurate, the new one says whether the reinforcement landed without the bot.
+  const hasNoticed = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('morning_credits') WHERE name='noticed'").get() as { cnt: number };
+  if (hasNoticed.cnt === 0) {
+    try { db.exec("ALTER TABLE morning_credits ADD COLUMN noticed TEXT"); } catch { /* table may not exist yet */ }
+  }
+
   // Migration: entry provenance — 'live' (telegram) vs 'archive' (imported past diaries)
   const hasSource = db.prepare("SELECT COUNT(*) as cnt FROM pragma_table_info('entries') WHERE name='source'").get() as { cnt: number };
   if (hasSource.cnt === 0) {
@@ -276,6 +285,7 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
       skill TEXT,
       counter TEXT,
       verdict TEXT CHECK(verdict IN ('yes', 'no', 'unsure')),
+      noticed TEXT CHECK(noticed IN ('self', 'told')),
       message_id INTEGER,
       created_at TEXT DEFAULT (datetime('now')),
       answered_at TEXT

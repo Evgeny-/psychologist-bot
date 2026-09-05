@@ -35,9 +35,8 @@ export interface Strings {
   btnLabelPartly: string;
   btnContractDone: string;
   btnContractMissed: string;
-  btnCreditYes: string;
-  btnCreditNo: string;
-  btnCreditUnsure: string;
+  btnCreditSelf: string;
+  btnCreditTold: string;
   answeredPrefix: string;
   answerLabels: Record<string, Record<string, string>>;
   toastSaved: string;

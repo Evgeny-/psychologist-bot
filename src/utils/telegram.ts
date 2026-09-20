@@ -1,4 +1,4 @@
-import type { Api, InlineKeyboard } from 'grammy';
+import type { Api } from 'grammy';
 import { logInfo, logWarn } from './logger.js';
 import { withRetry } from './retry.js';
 
@@ -274,12 +274,6 @@ function stripTags(html: string): string {
 
 export interface SendOptions {
   replyToMessageId?: number;
-  /**
-   * Attached to the LAST chunk only. Telegram renders a keyboard under the whole message, not
-   * where it appears in the text, so a question and its buttons must end up in the same final
-   * message — otherwise the buttons float below content they do not belong to.
-   */
-  keyboard?: InlineKeyboard;
 }
 
 async function sendChunks(
@@ -293,10 +287,8 @@ async function sendChunks(
   const messageIds: number[] = [];
 
   for (let i = 0; i < chunks.length; i++) {
-    const isLast = i === chunks.length - 1;
     const extra = {
       reply_to_message_id: options.replyToMessageId,
-      reply_markup: isLast ? options.keyboard : undefined,
     };
     try {
       const msg = await api.sendMessage(chatId, chunks[i], { parse_mode: 'HTML', ...extra });
@@ -322,7 +314,6 @@ async function sendChunks(
     chunks: chunks.length,
     firstMessageId: messageIds[0],
     lastMessageId: messageIds[messageIds.length - 1],
-    hasKeyboard: !!options.keyboard,
     textChars,
   });
 

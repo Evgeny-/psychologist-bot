@@ -4,7 +4,7 @@ import { config, EVENING_FROM_HOUR } from '../config.js';
 import { queries } from '../db/index.js';
 import { t } from '../i18n/index.js';
 import { todayLocal } from '../utils/date.js';
-import { generateWeeklyReport, generateMonthlyReport, generateMorningBrief } from './reports.js';
+import { generateWeeklyReport, generateMonthlyReport } from './reports.js';
 import { consolidateDailyMemoryForDate } from './daily-memory.js';
 import { logError, logInfo } from '../utils/logger.js';
 
@@ -29,7 +29,6 @@ export function startScheduler(api: Api): void {
   const SCHEDULE = {
     reminder: '30 20 * * *',
     consolidation: '55 23 * * *',
-    morning: '15 7 * * *',
     weekly: '0 10 * * 1',
     monthly: '0 10 1 * *',
   } as const;
@@ -89,17 +88,9 @@ export function startScheduler(api: Api): void {
   }, cronOptions);
 
   if (channelId) {
-    // Morning credit: every day at 07:15 → channel. Earlier than the old 08:00 because it is
-    // read on the way to the laptop, not at it — and it stays silent on days with nothing to
-    // credit, so the schedule is a ceiling rather than a quota.
-    cron.schedule(SCHEDULE.morning, async () => {
-      try {
-        logInfo('scheduler.morning.tick', { channelId });
-        await generateMorningBrief(api, channelId);
-      } catch (err) {
-        logError('scheduler.morning.failed', err, { channelId });
-      }
-    }, cronOptions);
+    // No morning job. Three morning formats were tried — a task for the day, a credit for
+    // yesterday, a label to confirm — and none got a word back; the credit now lives in the
+    // weekly letter, which he reads.
 
     // Weekly report: Monday at 10:00 → channel
     cron.schedule(SCHEDULE.weekly, async () => {

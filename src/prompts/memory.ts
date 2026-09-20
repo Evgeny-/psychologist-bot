@@ -30,7 +30,7 @@ const MEMORY_UPDATE_PROMPT_RU = `Ты управляешь долгосрочн�
 - ПАТТЕРНЫ — повторяющиеся паттерны мышления и поведения, с частотами где они известны (например: "навешивание ярлыков на себя — очень часто"). Частоты обновляй ТОЛЬКО при новых данных из отчёта.
 - ЧТО РАБОТАЕТ — приёмы, действия и условия, которые реально помогают. Пополняй при повторных подтверждениях.
 - ЧТО ЛОМАЕТ — триггеры и условия, которые стабильно ухудшают состояние. Пополняй при повторных подтверждениях.
-- АКТИВНАЯ РАБОТА — открытый слот недели, договорённости, фокусы терапии, кто из специалистов подключён. Держи актуальной: завершённое убирай, новые договорённости добавляй.
+- АКТИВНАЯ РАБОТА — договорённости, названные им сроки и назначенные встречи, фокусы терапии, кто из специалистов подключён. Держи актуальной: завершённое убирай, новые договорённости добавляй.
 
 Правила обновления:
 1. Сохраняй структуру и заголовки. Если секция пустая — оставь заголовок и короткую пометку "(пока нет данных)".
@@ -78,7 +78,7 @@ What goes in each section:
 - PATTERNS — recurring thinking and behavior patterns, with frequencies where known (e.g. "labeling self — very often"). Update frequencies ONLY when new data comes from the report.
 - WHAT WORKS — techniques, actions, and conditions that genuinely help. Add on repeated confirmation.
 - WHAT BREAKS — triggers and conditions that reliably worsen the state. Add on repeated confirmation.
-- ACTIVE WORK — the open slot for the week, agreements, therapy focus, which specialists are involved. Keep it current: remove what's finished, add new agreements.
+- ACTIVE WORK — agreements, deadlines and appointments they named, therapy focus, which specialists are involved. Keep it current: remove what's finished, add new agreements.
 
 Update rules:
 1. Preserve the structure and headers. If a section is empty — keep the header with a short note "(no data yet)".

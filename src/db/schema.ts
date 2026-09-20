@@ -222,6 +222,10 @@ export function initDb(dbPath: string = 'data/cbt-bot.db'): Database.Database {
 
     INSERT OR IGNORE INTO memory (id, content) VALUES (1, '');
 
+    -- contracts, slots, labels and morning_credits below belonged to the button-and-counter
+    -- mechanics retired in September 2026: nothing writes to them any more. They stay so the
+    -- history they hold (26 days of contracts, 12 morning credits) is not lost. credits, which
+    -- sits between them, is still written every evening.
     -- One binary contract per day: a single live contact made before the workday starts.
     -- Binary on purpose — the previous "weekly experiment" format failed because it could
     -- always be counted as done "in spirit"; "yes/no" cannot.

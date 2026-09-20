@@ -1,8 +1,8 @@
 /**
  * Prompt-eval harness for the daily analysis.
  *
- * Rebuilds the REAL prompt (memory blocks + contract + label review + patterns + already-asked
- * questions + similar episodes + yesterday/earlier context) for existing entries out of a DB dump, runs it against
+ * Rebuilds the REAL prompt (memory blocks + patterns + already-asked questions + already-offered
+ * replacements + similar episodes + yesterday/earlier context) for existing entries out of a DB dump, runs it against
  * OpenAI with a chosen system-prompt variant / model / reasoning effort, and saves
  * side-by-side results for comparison.
  *

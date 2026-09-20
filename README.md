@@ -15,16 +15,13 @@ Multiple entries per day? The bot sees your earlier entries as reference, so it 
 - **Thread conversations** — reply to discuss your entry using CBT techniques (Socratic dialogue, reframing)
 - **Audio replies on demand** — ask the bot to answer by voice/audio and it will synthesize the reply
 - **Same-day context** — later entries include earlier ones as reference, so the model sees the full picture
-- **Morning credit** — the morning message names one thing you actually did yesterday, quoted verbatim, and asks one question with one row of buttons: had you already counted it yourself? It is not a task, and it asks the one thing neither side knows in advance — the first version asked whether the credit was accurate and got "yes" four times out of four within minutes. A day that ended in a blow is never credited from its good first half; it gets one line naming what happened, or nothing. On days with nothing worth crediting the bot sends nothing at all — silence is a supported outcome, not a failure
-- **Daily contract** — one binary commitment per day: a single live contact with a person. The evening entry usually answers it by itself; the buttons only appear when it didn't. The week's count shows up in the weekly report. Binary on purpose — a target that can be met "in spirit" always is
-- **Label review** — a verbatim label from yesterday evening is read back the next morning with one question: still true — yes / no / partly. No arguing, just a counter of how many evening verdicts survive the morning. Used on the mornings where there is no credit to give
+- **Weekly letter** — on Monday the bot writes a short letter about the week: the week named in one line, what you did in your own words with dates (this is the week's credit — you remember your verdicts on yourself and forget your actions), one observation about what you did or thought that connects at least two days, and what is still hanging. No counters, no empty sections, no closing question. Two earlier formats failed in opposite directions — a 7,500-character retelling, then a seven-section skeleton of counters — and the letter replaces both. There is no morning message: three morning formats were tried and none got a word back
 - **Say this out loud** — when an entry carries a charged verdict about yourself ("I have problems with this", "I should have"), the reply quotes it back and offers one short sentence to say instead. Not the opposite of what you said — repeating a sentence you don't believe produces counter-argument rather than comfort — only a more precise one: this episode instead of the whole person, today instead of always. Second person, by name when `BOT_USER_NAME` is set. Never fires on statements about other people
-- **Vetoes** — `/veto <text>` permanently blacklists a topic or phrasing. The list goes into every morning prompt verbatim and never expires; `/veto` lists them, `/veto -3` removes one
-- **Weekly slot** — instead of assigning an exercise, the weekly report asks a single question: which slot did you book or pay for this week (date, time, person, amount). Slots are only recorded when a real commitment is named in an entry
-- **External credits** — reactions from other people are stored separately from your own wins, and listed back in the weekly report
+- **Vetoes** — `/veto <text>` permanently blacklists a topic or phrasing. The list goes into every weekly and monthly prompt verbatim and never expires; `/veto` lists them, `/veto -3` removes one
+- **External credits** — what other people did in response to you or for you (a reply, an offer of help, a dinner cooked, an invitation) is stored separately from your own wins and mentioned in the weekly and monthly letters — only when there is something; the letters never say "none recorded"
 - **Short-term memory** — compact daily summaries for the last 10 days, used in new analyses and thread replies
 - **Compare mode** — run Claude + OpenAI in parallel, see both analyses side by side
-- **Reports** — weekly and monthly summaries with smart context fitting, each with an attached 30-day metrics chart (rendered locally, with missing days shown by absent markers)
+- **Monthly letter** — the same shape over four weeks, opening on what has not moved. Both letters come with an attached 30-day metrics chart (rendered locally, with missing days shown by absent markers)
 - **Metrics** — mood, anxiety, stress, productivity, routine (0-10), extracted from your speech
 - **Streak tracking** — consecutive days with entries
 - **CSV export** — download your diary data
@@ -39,7 +36,6 @@ Type these in the **channel** (not the discussion group):
 |---------|-------------|
 | `/weekly` | Generate weekly report (Monday → today) |
 | `/monthly` | Generate monthly report (1st → today) |
-| `/morning` | Generate today's morning credit manually |
 | `/veto` | List standing "never raise this again" instructions |
 | `/veto <text>` | Add one; `/veto -3` removes it by number |
 | `/export` | Download all entries as CSV |
@@ -81,11 +77,11 @@ Key ones:
 - `ASR_PROVIDER` — `elevenlabs` or `openai`
 - `TTS_PROVIDER` — `elevenlabs` or `openai`
 - `COMPARE_MODE=true` — run all LLM providers in parallel
-- `BOT_LANGUAGE` — `ru` or `en`. Covers both halves: every system prompt has a Russian and an English variant, and all bot-facing text (buttons, callback toasts, headings, report titles) comes from `src/i18n/`. Adding a user-facing string means adding it to `ru.ts`, `en.ts` and the `Strings` interface — never inline it in a service.
+- `BOT_LANGUAGE` — `ru` or `en`. Covers both halves: every system prompt has a Russian and an English variant, and all bot-facing text (headings, report titles, reminders) comes from `src/i18n/`. Adding a user-facing string means adding it to `ru.ts`, `en.ts` and the `Strings` interface — never inline it in a service.
 - `BOT_USER_NAME` — optional first name, used only to address you in the say-this-out-loud line. Left unset, it falls back to plain second person
 - `BOT_TIMEZONE` — for correct date calculations (e.g. `Europe/Amsterdam`)
 
-Scheduled jobs use `BOT_TIMEZONE`, including the daily morning credit at 07:15 (which stays silent on days with nothing to credit).
+Scheduled jobs use `BOT_TIMEZONE`: the 20:30 reminder, the 23:55 memory consolidation, the weekly letter on Monday at 10:00 and the monthly one on the 1st at 10:00.
 
 `EVENING_FROM_HOUR` in `src/config.ts` is the hour from which an entry counts as summing the day up. Two things read it and must not drift apart: the 20:30 reminder skips days that already have an entry from that hour on, and the daily prompt refuses to infer metrics from a word description written earlier — mornings describe a day not yet lived.
 

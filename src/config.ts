@@ -27,7 +27,6 @@ export const config = {
     channelId: process.env.TELEGRAM_CHANNEL_ID ? Number(process.env.TELEGRAM_CHANNEL_ID) : undefined,
     discussionGroupId: process.env.TELEGRAM_DISCUSSION_GROUP_ID ? Number(process.env.TELEGRAM_DISCUSSION_GROUP_ID) : undefined,
     adminChatId: process.env.TELEGRAM_ADMIN_CHAT_ID ? Number(process.env.TELEGRAM_ADMIN_CHAT_ID) : undefined,
-    ownerUserId: process.env.TELEGRAM_OWNER_USER_ID ? Number(process.env.TELEGRAM_OWNER_USER_ID) : undefined,
   },
 
   asr: {

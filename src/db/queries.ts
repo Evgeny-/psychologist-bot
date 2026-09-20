@@ -88,40 +88,6 @@ export interface ExperimentRow {
 }
 
 
-export interface ContractRow {
-  date: string;
-  text: string | null;
-  status: 'open' | 'done' | 'missed';
-  resolved_entry_id: number | null;
-  note: string | null;
-  created_at: string;
-  resolved_at: string | null;
-}
-
-export interface SlotRow {
-  id: number;
-  week_start: string;
-  text: string;
-  when_at: string | null;
-  who: string | null;
-  cost: string | null;
-  status: 'open' | 'kept' | 'missed';
-  result_note: string | null;
-  created_at: string;
-  closed_at: string | null;
-}
-
-export interface LabelRow {
-  id: number;
-  entry_id: number | null;
-  date: string;
-  said_at: string | null;
-  quote: string;
-  verdict: 'yes' | 'no' | 'partly' | null;
-  reviewed_at: string | null;
-  created_at: string;
-}
-
 export interface EntryEmbeddingRow {
   entry_id: number;
   model: string;
@@ -395,13 +361,6 @@ export class Queries {
     ).all(type, start, end) as ReportRow[];
   }
 
-  hasReportForPeriod(type: string, periodStart: string, periodEnd: string): boolean {
-    const row = this.db.prepare(
-      'SELECT 1 FROM reports WHERE type = ? AND period_start = ? AND period_end = ? LIMIT 1'
-    ).get(type, periodStart, periodEnd);
-    return !!row;
-  }
-
   /** Count consecutive days with entries ending at `today` */
   getStreak(today?: string): number {
     const rows = this.db.prepare(
@@ -514,9 +473,10 @@ export class Queries {
   }
 
   // --- Experiments (retired format, kept read-only for history) ---
-  // Weekly behavioural experiments were replaced by the daily contract and the weekly slot:
-  // over four months the format produced one counted rep out of twenty opportunities. Only
-  // the two calls needed to retire a still-open experiment remain.
+  // Weekly behavioural experiments were replaced in August 2026 by the daily contract and the
+  // weekly slot (over four months the format produced one counted rep out of twenty
+  // opportunities), and those were retired in turn in September 2026 in favour of the weekly
+  // letter. Only the two calls needed to retire a still-open experiment remain.
 
   getActiveExperiment(): ExperimentRow | null {
     const row = this.db.prepare(
@@ -533,140 +493,6 @@ export class Queries {
     this.db.prepare(
       'UPDATE experiments SET status = ?, result_note = ?, end_date = ? WHERE id = ?'
     ).run(close.status, close.result_note ?? null, close.end_date, id);
-  }
-
-  // --- Contracts: one binary "did you make one live contact" per day ---
-
-  getContract(date: string): ContractRow | null {
-    const row = this.db.prepare('SELECT * FROM contracts WHERE date = ?').get(date) as ContractRow | undefined;
-    return row ?? null;
-  }
-
-  /** Opens today's contract if absent; never resets one already resolved. */
-  openContract(date: string): void {
-    this.db.prepare("INSERT OR IGNORE INTO contracts (date, status) VALUES (?, 'open')").run(date);
-  }
-
-  /** Records what he named as the contract, without touching its status. */
-  setContractText(date: string, text: string): void {
-    this.db.prepare('UPDATE contracts SET text = ? WHERE date = ?').run(text, date);
-  }
-
-  resolveContract(date: string, resolution: {
-    status: 'done' | 'missed';
-    note?: string;
-    entry_id?: number;
-  }): void {
-    this.db.prepare(`
-      UPDATE contracts
-      SET status = ?, note = COALESCE(?, note), resolved_entry_id = COALESCE(?, resolved_entry_id),
-          resolved_at = datetime('now')
-      WHERE date = ?
-    `).run(resolution.status, resolution.note ?? null, resolution.entry_id ?? null, date);
-  }
-
-  /** Auto-close days that were never answered, so the streak reflects reality. */
-  markStaleContractsMissed(beforeDate: string): number {
-    const result = this.db.prepare(
-      "UPDATE contracts SET status = 'missed', resolved_at = datetime('now') WHERE status = 'open' AND date < ?"
-    ).run(beforeDate);
-    return result.changes;
-  }
-
-  /** Per-day contract outcomes: the weekly report asks which days worked, not just how many. */
-  getContractsByRange(start: string, end: string): Array<{ date: string; status: string; text: string | null; note: string | null }> {
-    return this.db.prepare(
-      'SELECT date, status, text, note FROM contracts WHERE date BETWEEN ? AND ? ORDER BY date ASC'
-    ).all(start, end) as Array<{ date: string; status: string; text: string | null; note: string | null }>;
-  }
-
-  getContractStats(start: string, end: string): { done: number; missed: number; open: number } {
-    const row = this.db.prepare(`
-      SELECT
-        SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done,
-        SUM(CASE WHEN status = 'missed' THEN 1 ELSE 0 END) as missed,
-        SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open
-      FROM contracts WHERE date BETWEEN ? AND ?
-    `).get(start, end) as { done: number | null; missed: number | null; open: number | null };
-    return { done: row?.done ?? 0, missed: row?.missed ?? 0, open: row?.open ?? 0 };
-  }
-
-  // --- Slots: commitments that already cost a date, money or another person ---
-
-  getOpenSlot(): SlotRow | null {
-    const row = this.db.prepare(
-      "SELECT * FROM slots WHERE status = 'open' ORDER BY week_start DESC, id DESC LIMIT 1"
-    ).get() as SlotRow | undefined;
-    return row ?? null;
-  }
-
-  insertSlot(slot: {
-    week_start: string;
-    text: string;
-    when_at?: string;
-    who?: string;
-    cost?: string;
-  }): number {
-    const result = this.db.prepare(`
-      INSERT INTO slots (week_start, text, when_at, who, cost)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(slot.week_start, slot.text, slot.when_at ?? null, slot.who ?? null, slot.cost ?? null);
-    return result.lastInsertRowid as number;
-  }
-
-  closeSlot(id: number, close: { status: 'kept' | 'missed'; result_note?: string }): void {
-    this.db.prepare(
-      "UPDATE slots SET status = ?, result_note = ?, closed_at = datetime('now') WHERE id = ?"
-    ).run(close.status, close.result_note ?? null, id);
-  }
-
-  getRecentSlots(limit: number): SlotRow[] {
-    return this.db.prepare('SELECT * FROM slots ORDER BY week_start DESC, id DESC LIMIT ?').all(limit) as SlotRow[];
-  }
-
-  // --- Labels: verbatim verdicts held over for a next-morning review ---
-
-  insertLabel(label: {
-    entry_id?: number;
-    date: string;
-    said_at?: string;
-    quote: string;
-  }): number {
-    const result = this.db.prepare(`
-      INSERT INTO labels (entry_id, date, said_at, quote)
-      VALUES (?, ?, ?, ?)
-    `).run(label.entry_id ?? null, label.date, label.said_at ?? null, label.quote);
-    return result.lastInsertRowid as number;
-  }
-
-  /** The label to put in front of him tomorrow morning: latest unreviewed one for a date. */
-  getLabelForReview(date: string): LabelRow | null {
-    const row = this.db.prepare(
-      'SELECT * FROM labels WHERE date = ? AND verdict IS NULL ORDER BY id DESC LIMIT 1'
-    ).get(date) as LabelRow | undefined;
-    return row ?? null;
-  }
-
-  reviewLabel(id: number, verdict: 'yes' | 'no' | 'partly'): void {
-    this.db.prepare("UPDATE labels SET verdict = ?, reviewed_at = datetime('now') WHERE id = ?").run(verdict, id);
-  }
-
-  /** Drop unanswered labels once they are too old to review honestly. */
-  expireLabels(beforeDate: string): number {
-    const result = this.db.prepare('DELETE FROM labels WHERE verdict IS NULL AND date < ?').run(beforeDate);
-    return result.changes;
-  }
-
-  /** How many evening verdicts survived the morning — his own counter, not an argument. */
-  getLabelReviewStats(): { yes: number; no: number; partly: number } {
-    const row = this.db.prepare(`
-      SELECT
-        SUM(CASE WHEN verdict = 'yes' THEN 1 ELSE 0 END) as yes,
-        SUM(CASE WHEN verdict = 'no' THEN 1 ELSE 0 END) as no,
-        SUM(CASE WHEN verdict = 'partly' THEN 1 ELSE 0 END) as partly
-      FROM labels
-    `).get() as { yes: number | null; no: number | null; partly: number | null };
-    return { yes: row?.yes ?? 0, no: row?.no ?? 0, partly: row?.partly ?? 0 };
   }
 
   // --- Credits: externally sourced evidence that the work landed ---
@@ -712,6 +538,17 @@ export class Queries {
     return out;
   }
 
+  /** Has any other entry of this day already carried a say-instead line? */
+  hasSayInsteadForDate(date: string, excludeEntryId: number): boolean {
+    const row = this.db.prepare(`
+      SELECT 1 FROM analyses a JOIN entries e ON e.id = a.entry_id
+      WHERE e.date = ? AND a.entry_id != ?
+        AND a.say_instead_json IS NOT NULL AND a.say_instead_json != ''
+      LIMIT 1
+    `).get(date, excludeEntryId);
+    return !!row;
+  }
+
   /** Recently asked closing questions, so the next prompt can refuse to repeat them. */
   getRecentClosingQuestions(limit: number): string[] {
     const rows = this.db.prepare(`
@@ -722,101 +559,6 @@ export class Queries {
       ORDER BY a.id DESC LIMIT ?
     `).all(limit) as Array<{ q: string }>;
     return rows.map((r) => r.q);
-  }
-
-  // --- Morning credits: the credit-for-yesterday that replaced the morning task ---
-
-  getMorningCredit(date: string): { date: string; source_date: string; quote: string | null; noticed: string | null } | null {
-    const row = this.db.prepare('SELECT date, source_date, quote, noticed FROM morning_credits WHERE date = ?').get(date) as
-      { date: string; source_date: string; quote: string | null; noticed: string | null } | undefined;
-    return row ?? null;
-  }
-
-  insertMorningCredit(credit: {
-    date: string;
-    source_date: string;
-    quote?: string;
-    skill?: string;
-    counter?: string;
-    message_id?: number;
-  }): void {
-    this.db.prepare(`
-      INSERT OR REPLACE INTO morning_credits (date, source_date, quote, skill, counter, message_id)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(credit.date, credit.source_date, credit.quote ?? null, credit.skill ?? null,
-           credit.counter ?? null, credit.message_id ?? null);
-  }
-
-  /**
-   * Record whether he had already counted yesterday's action himself.
-   *
-   * Replaces the old "did this happen" verdict, which was answered yes four times out of four
-   * within minutes — an answer known in advance is not an answer. This one can genuinely go
-   * either way, and it measures the thing the whole mechanic exists for: whether the
-   * reinforcement is starting to land without the bot pointing at it.
-   */
-  answerMorningCredit(date: string, noticed: 'self' | 'told'): void {
-    this.db.prepare("UPDATE morning_credits SET noticed = ?, answered_at = datetime('now') WHERE date = ?").run(noticed, date);
-  }
-
-  /** How often he had already counted it himself — his own counter, not an argument. */
-  getMorningCreditStats(): { self: number; told: number; unanswered: number } {
-    const row = this.db.prepare(`
-      SELECT
-        SUM(CASE WHEN noticed = 'self' THEN 1 ELSE 0 END) as self,
-        SUM(CASE WHEN noticed = 'told' THEN 1 ELSE 0 END) as told,
-        SUM(CASE WHEN noticed IS NULL THEN 1 ELSE 0 END) as unanswered
-      FROM morning_credits
-    `).get() as { self: number | null; told: number | null; unanswered: number | null };
-    return { self: row?.self ?? 0, told: row?.told ?? 0, unanswered: row?.unanswered ?? 0 };
-  }
-
-  /** What was already credited, so a morning does not credit the same walk three times running. */
-  getRecentMorningCredits(limit: number): Array<{ date: string; quote: string; skill: string; noticed: string | null }> {
-    return this.db.prepare(`
-      SELECT date, quote, skill, noticed FROM morning_credits
-      WHERE quote IS NOT NULL AND skill IS NOT NULL
-      ORDER BY date DESC LIMIT ?
-    `).all(limit) as Array<{ date: string; quote: string; skill: string; noticed: string | null }>;
-  }
-
-  /** Credits he confirmed with a tap — the only ones a report may repeat back as fact. */
-  getConfirmedMorningCredits(start: string, end: string): Array<{ date: string; quote: string; skill: string; noticed: string | null }> {
-    return this.db.prepare(`
-      SELECT date, quote, skill, noticed FROM morning_credits
-      WHERE (noticed IS NOT NULL OR verdict = 'yes') AND quote IS NOT NULL AND skill IS NOT NULL
-        AND date BETWEEN ? AND ?
-      ORDER BY date ASC
-    `).all(start, end) as Array<{ date: string; quote: string; skill: string; noticed: string | null }>;
-  }
-
-  getMorningCreditStatsByRange(start: string, end: string): { self: number; told: number; unanswered: number } {
-    const row = this.db.prepare(`
-      SELECT
-        SUM(CASE WHEN noticed = 'self' THEN 1 ELSE 0 END) as self,
-        SUM(CASE WHEN noticed = 'told' THEN 1 ELSE 0 END) as told,
-        SUM(CASE WHEN noticed IS NULL THEN 1 ELSE 0 END) as unanswered
-      FROM morning_credits WHERE date BETWEEN ? AND ?
-    `).get(start, end) as { self: number | null; told: number | null; unanswered: number | null };
-    return { self: row?.self ?? 0, told: row?.told ?? 0, unanswered: row?.unanswered ?? 0 };
-  }
-
-  /** Wins recorded by the evening analysis — the raw material a morning credit is built from. */
-  getWinsForDate(date: string): string[] {
-    const rows = this.db.prepare(`
-      SELECT a.wins_json FROM analyses a JOIN entries e ON e.id = a.entry_id
-      WHERE e.date = ? AND a.wins_json IS NOT NULL
-        AND a.id IN (SELECT MIN(id) FROM analyses GROUP BY entry_id)
-      ORDER BY a.id
-    `).all(date) as Array<{ wins_json: string }>;
-    const out: string[] = [];
-    for (const r of rows) {
-      try {
-        const parsed = JSON.parse(r.wins_json);
-        if (Array.isArray(parsed)) out.push(...parsed.filter((w): w is string => typeof w === 'string'));
-      } catch { /* malformed row, skip */ }
-    }
-    return out;
   }
 
   // --- Vetoes: standing instructions about what never to raise again ---

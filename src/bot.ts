@@ -5,12 +5,11 @@ import { queries } from './db/index.js';
 import { transcribeVoiceMessage } from './services/transcription.js';
 import { analyzeEntry } from './services/analysis.js';
 import { handleThreadReply } from './services/chat.js';
-import { generateTestWeeklyReport, generateTestMonthlyReport, generateTestMorningBrief, generateMemory } from './services/reports.js';
+import { generateTestWeeklyReport, generateTestMonthlyReport, generateMemory } from './services/reports.js';
 import { generateRecentDailyMemory, showRecentDailyMemory } from './services/daily-memory.js';
 import { MEMORY_MAX_LENGTH } from './prompts/memory.js';
-import { todayLocal, nowLocalTime, formatDateLocal } from './utils/date.js';
+import { todayLocal, nowLocalTime } from './utils/date.js';
 import { sendSplitMessages, sendRawHtmlMessages, notifyChannelPostForwarded, postChannelHeader, escapeHtml } from './utils/telegram.js';
-import { decodeCallback, answeredLine } from './utils/callbacks.js';
 import { ApiBalanceError } from './providers/asr/elevenlabs.js';
 import { ApiBalanceError as LLMBalanceError } from './providers/llm/claude.js';
 import { logError, logInfo, logWarn } from './utils/logger.js';
@@ -18,63 +17,6 @@ import { logError, logInfo, logWarn } from './utils/logger.js';
 
 export function createBot(): Bot {
   const bot = new Bot(config.telegram.botToken);
-
-  /**
-   * Answers to the bot's one-question messages.
-   *
-   * Every ask lives in the discussion group, never in a channel post: an inline keyboard on a
-   * channel post removes the "Comments" button and takes the whole thread with it.
-   */
-  bot.on('callback_query:data', async (ctx) => {
-    const payload = decodeCallback(ctx.callbackQuery.data);
-    if (!payload) {
-      await ctx.answerCallbackQuery().catch(() => {});
-      return;
-    }
-
-    const fromId = ctx.from?.id;
-    if (config.telegram.ownerUserId && fromId !== config.telegram.ownerUserId) {
-      logWarn('bot.callback.foreign_user', { fromId, data: ctx.callbackQuery.data });
-      await ctx.answerCallbackQuery({ text: t().toastForeignButton }).catch(() => {});
-      return;
-    }
-
-    try {
-      let toast = t().toastSaved;
-      if (payload.kind === 'lbl') {
-        const verdict = payload.value as 'yes' | 'no' | 'partly';
-        queries.reviewLabel(Number(payload.ref), verdict);
-        toast = verdict === 'no' ? t().toastDropped : t().toastSaved;
-      } else if (payload.kind === 'ctr') {
-        queries.resolveContract(payload.ref, { status: payload.value as 'done' | 'missed' });
-      } else if (payload.kind === 'cred') {
-        queries.answerMorningCredit(payload.ref, payload.value as 'self' | 'told');
-      }
-
-      logInfo('bot.callback.answered', { kind: payload.kind, ref: payload.ref, value: payload.value, fromId });
-      await ctx.answerCallbackQuery({ text: toast }).catch(() => {});
-
-      // Rewrite the message so the record shows what was answered; without this the buttons stay
-      // tappable and the history says nothing about which question they belonged to.
-      //
-      // The original text is re-sent with its original entities rather than re-parsed as HTML:
-      // `message.text` comes back with the markup stripped, so a round-trip through the parser
-      // would flatten the quote the question was built around. Entity offsets are UTF-16 code
-      // units, which is what String#length counts, so appending leaves every offset valid.
-      const message = ctx.callbackQuery.message;
-      const original = message && 'text' in message ? message.text ?? '' : '';
-      const entities = message && 'entities' in message ? message.entities ?? [] : [];
-      const suffix = answeredLine(payload.kind, payload.value, nowLocalTime());
-      const updated = original ? `${original}\n\n${suffix}` : suffix;
-      await ctx.editMessageText(updated, {
-        entities: [...entities, { type: 'italic' as const, offset: updated.length - suffix.length, length: suffix.length }],
-        reply_markup: undefined,
-      }).catch((err) => logWarn('bot.callback.edit_failed', { error: err }));
-    } catch (err) {
-      logError('bot.callback.failed', err, { data: ctx.callbackQuery.data });
-      await ctx.answerCallbackQuery({ text: t().toastSaveFailed }).catch(() => {});
-    }
-  });
 
   // Commands in channel posts
   bot.on('channel_post:text', async (ctx) => {
@@ -90,12 +32,6 @@ export function createBot(): Bot {
     if (text === '/monthly' || text.startsWith('/monthly@')) {
       logInfo('bot.channel_command', { command: '/monthly', chatId, messageId: ctx.channelPost.message_id });
       generateTestMonthlyReport(ctx.api, chatId).catch(err => logError('bot.command.monthly_failed', err, { chatId }));
-      return;
-    }
-
-    if (text === '/morning' || text.startsWith('/morning@')) {
-      logInfo('bot.channel_command', { command: '/morning', chatId, messageId: ctx.channelPost.message_id });
-      generateTestMorningBrief(ctx.api, chatId).catch(err => logError('bot.command.morning_failed', err, { chatId }));
       return;
     }
 
@@ -415,8 +351,8 @@ async function handleNewEntry(ctx: Context): Promise<void> {
 /**
  * Standing "never raise this again" instructions.
  *
- * `/veto <текст>` records one, `/veto` lists them, `/veto -<id>` removes one. Every morning
- * prompt carries the list verbatim. Without it the generator rediscovers a rejected idea a few
+ * `/veto <текст>` records one, `/veto` lists them, `/veto -<id>` removes one. Every weekly and
+ * monthly prompt carries the list verbatim. Without it the generator rediscovers a rejected idea a few
  * weeks later, and each repeat says the refusal was never recorded.
  */
 async function handleVetoCommand(api: import('grammy').Api, chatId: number, text: string): Promise<void> {

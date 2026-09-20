@@ -1,11 +1,10 @@
-import type { Api, InlineKeyboard } from 'grammy';
+import type { Api } from 'grammy';
 import { createLLMProvider, createAllLLMProviders, type LLMProvider, type LLMUsage } from '../providers/llm/index.js';
 import { getDailySystemPrompt } from '../prompts/daily.js';
-import { todayLocal, shiftLocalDate, mondayOfWeek } from '../utils/date.js';
+import { todayLocal, shiftLocalDate } from '../utils/date.js';
 import { config } from '../config.js';
 import { t } from '../i18n/index.js';
 import { sendRawHtmlMessages, markdownToHtml } from '../utils/telegram.js';
-import { contractKeyboard } from '../utils/callbacks.js';
 import { queries } from '../db/index.js';
 import { sendAudioReply } from './audio-replies.js';
 import { buildSystemPromptWithUserMemory, sanitizeDailyMemorySummary } from './memory-context.js';
@@ -25,28 +24,10 @@ interface ThoughtRecord {
   belief_question?: string;
 }
 
-interface ContractSignal {
-  done?: boolean;
-  named?: string;
-  note?: string;
-}
-
 interface SayInstead {
   quote?: string;
   kind?: 'label' | 'should';
   say?: string;
-}
-
-interface LabelReviewSignal {
-  verdict?: 'yes' | 'no' | 'partly';
-  note?: string;
-}
-
-interface SlotSignal {
-  text?: string;
-  when?: string;
-  who?: string;
-  cost?: string;
 }
 
 interface AnalysisResult {
@@ -69,11 +50,8 @@ interface AnalysisResult {
   };
   daily_memory_summary?: string;
   thought_record?: ThoughtRecord | null;
-  contract?: ContractSignal | null;
-  label_review?: LabelReviewSignal | null;
   say_instead?: SayInstead | null;
   credits?: string[];
-  slot?: SlotSignal | null;
   closing_question?: string | null;
   analysis_text?: string;
   reply_audio_requested?: boolean;
@@ -180,72 +158,18 @@ function saveDailyMemorySummary(date: string, entryId: number, parsed: AnalysisR
   return true;
 }
 
-const LABEL_DISTORTION_MARKERS = ['ярлык', 'label'];
-
-/** Distortions whose type is a label ("навешивание ярлыков"), which are the ones worth re-reading in the morning. */
-function extractLabelQuotes(parsed: AnalysisResult | null): string[] {
-  if (!Array.isArray(parsed?.distortions)) return [];
-  return parsed.distortions
-    .filter((d) => {
-      const type = typeof d?.type === 'string' ? d.type.toLowerCase() : '';
-      return LABEL_DISTORTION_MARKERS.some((m) => type.includes(m));
-    })
-    .map((d) => (typeof d?.quote === 'string' ? d.quote.trim() : ''))
-    .filter((q) => q.length > 0 && q.length <= 300)
-    .slice(0, 2);
-}
-
 /**
- * Persist the behavioural signals the analysis extracted: the day's contract, the
- * morning label verdict, external credits, a newly named slot, and any fresh labels
- * held over for tomorrow.
+ * Persist the one behavioural signal the analysis still extracts: external credits — proof
+ * sourced from someone other than him. Runs at most once per entry (first successful provider)
+ * so compare mode does not double-count, and is fail-soft: a broken signal must never cost the
+ * user their analysis reply.
  *
- * Runs at most once per entry (first successful provider) so compare mode does not
- * double-count. Every branch is fail-soft: a broken signal must never cost the user
- * their analysis reply.
+ * The contract, the label review and the slot used to be recorded here too. They lived on
+ * buttons he tapped by reflex and in report counters he called dry, and were retired with the
+ * morning message.
  */
-function applyDailySignals(entryId: number, date: string, parsed: AnalysisResult | null): { contractCounted: boolean } {
-  let contractCounted = false;
-  if (!parsed) return { contractCounted };
-
-  // Contract: only a positive verdict is written straight away. A "not yet" early in the
-  // day must not close the day — the nightly sweep marks genuinely unanswered days missed.
-  try {
-    const contract = parsed.contract;
-    if (contract?.done === true) {
-      const existing = queries.getContract(date);
-      if (existing && existing.status !== 'done') {
-        queries.resolveContract(date, {
-          status: 'done',
-          note: typeof contract.named === 'string' ? contract.named : contract.note,
-          entry_id: entryId,
-        });
-        contractCounted = true;
-        logInfo('contract.counted', { entryId, date, named: contract.named });
-      }
-    } else if (typeof contract?.named === 'string' && contract.named.trim()) {
-      const existing = queries.getContract(date);
-      if (existing && !existing.text) queries.setContractText(date, contract.named.trim());
-    }
-  } catch (err) {
-    logWarn('contract.apply_failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
-  }
-
-  // Label review: yesterday's verdict, answered this morning or later in the day.
-  try {
-    const verdict = parsed.label_review?.verdict;
-    if (verdict === 'yes' || verdict === 'no' || verdict === 'partly') {
-      const pending = queries.getLabelForReview(shiftLocalDate(date, -1)) ?? queries.getLabelForReview(date);
-      if (pending) {
-        queries.reviewLabel(pending.id, verdict);
-        logInfo('label.reviewed', { entryId, labelId: pending.id, verdict });
-      }
-    }
-  } catch (err) {
-    logWarn('label.review_failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
-  }
-
-  // External credits: proof sourced from someone other than him.
+function applyDailySignals(entryId: number, date: string, parsed: AnalysisResult | null): void {
+  if (!parsed) return;
   try {
     const credits = Array.isArray(parsed.credits) ? parsed.credits : [];
     for (const credit of credits.slice(0, 5)) {
@@ -258,39 +182,6 @@ function applyDailySignals(entryId: number, date: string, parsed: AnalysisResult
   } catch (err) {
     logWarn('credits.apply_failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
   }
-
-  // Slot: a commitment that already costs a date, money or another person.
-  try {
-    const slot = parsed.slot;
-    const text = typeof slot?.text === 'string' ? slot.text.trim() : '';
-    if (text) {
-      const open = queries.getOpenSlot();
-      if (!open || open.text.trim() !== text) {
-        const id = queries.insertSlot({
-          week_start: mondayOfWeek(date),
-          text: text.slice(0, 300),
-          when_at: typeof slot?.when === 'string' ? slot.when : undefined,
-          who: typeof slot?.who === 'string' ? slot.who : undefined,
-          cost: typeof slot?.cost === 'string' ? slot.cost : undefined,
-        });
-        logInfo('slot.recorded', { entryId, slotId: id });
-      }
-    }
-  } catch (err) {
-    logWarn('slot.apply_failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
-  }
-
-  // Fresh labels, stored verbatim for tomorrow morning's review.
-  try {
-    const entryTime = queries.getEntryById(entryId)?.local_time ?? undefined;
-    for (const quote of extractLabelQuotes(parsed)) {
-      queries.insertLabel({ entry_id: entryId, date, said_at: entryTime, quote });
-    }
-  } catch (err) {
-    logWarn('label.capture_failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
-  }
-
-  return { contractCounted };
 }
 
 function formatUsage(usage?: LLMUsage): string {
@@ -299,6 +190,25 @@ function formatUsage(usage?: LLMUsage): string {
 }
 
 const escapeTg = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/**
+ * One replacement sentence a day, no matter how many entries the day has.
+ *
+ * Six voice notes in one morning produced three different sentences for the same verdict about
+ * himself, thirty-seven minutes apart. The prompt says once a day; this is the backstop, and it
+ * drops the field before it is persisted so the count stays honest for the next entry.
+ */
+function capSayInsteadPerDay(date: string, entryId: number, parsed: AnalysisResult | null): void {
+  if (!parsed?.say_instead) return;
+  try {
+    if (queries.hasSayInsteadForDate(date, entryId)) {
+      logInfo('say_instead.capped', { entryId, date });
+      parsed.say_instead = null;
+    }
+  } catch (err) {
+    logWarn('say_instead.cap_failed', { entryId, reason: err instanceof Error ? err.message : String(err) });
+  }
+}
 
 /**
  * The say-instead pair, but only when it is actually usable.
@@ -350,16 +260,6 @@ function formatMetricsLine(metrics: ExtractedMetrics): string {
   return `<pre>${parts.map(([k, v]) => `${k} ${v}`).join('   ')}</pre>`;
 }
 
-/** The one line he actually asked for: was the behaviour credited, and for what. */
-function formatCredit(parsed: AnalysisResult | null): string {
-  const contract = parsed?.contract;
-  if (contract?.done !== true) return '';
-  const what = typeof contract.named === 'string' ? contract.named.trim() : '';
-  const label = t().creditedLabel;
-  if (!what) return `<b>${label}</b>`;
-  return `<b>${label}:</b> ${escapeTg(what)}`;
-}
-
 /**
  * Distortions with their quotes and reframes.
  *
@@ -384,26 +284,6 @@ function formatDistortions(parsed: AnalysisResult | null): string {
 }
 
 /**
- * The one question the evening message may carry, and only when the answer is genuinely missing.
- *
- * The contract used to be asked every single morning, unconditionally, as a task for the day —
- * which made it the most reliably ignored line the bot produced. It is now read out of what he
- * already said: `applyDailySignals` resolves it from the transcript, and the buttons appear only
- * on the days the transcript did not say either way. Telegram draws the keyboard under the whole
- * message, so the question is appended last, alone.
- */
-function buildContractAsk(date: string): { text: string; keyboard: InlineKeyboard } | null {
-  try {
-    const contract = queries.getContract(date);
-    if (!contract || contract.status !== 'open') return null;
-    return { text: t().contractAsk, keyboard: contractKeyboard(date) };
-  } catch (err) {
-    logWarn('analysis.contract_ask_failed', { date, reason: err instanceof Error ? err.message : String(err) });
-    return null;
-  }
-}
-
-/**
  * The line he is meant to say out loud, not read.
  *
  * His own sentence goes in the quote so he can recognise it; the replacement goes in bold
@@ -422,8 +302,7 @@ function formatSayInstead(parsed: AnalysisResult | null): string {
 /**
  * Compose the evening reply.
  *
- * Order is deliberate: the credit goes first because it is the only thing that shows up in the
- * notification preview, and it is the single element he named as missing ("чтобы меня засчитывали").
+ * The prose goes first because it is what shows up in the notification preview.
  * No collapsing anywhere — he said he would expand everything or read nothing, so hiding content
  * only costs a tap. Every analysis in the corpus fits one message even fully expanded.
  */
@@ -433,7 +312,6 @@ export function renderAnalysisMessage(
   metrics: ExtractedMetrics,
 ): string {
   const blocks = [
-    formatCredit(parsed),
     markdownToHtml(freeform),
     formatDistortions(parsed),
     formatSayInstead(parsed),
@@ -454,47 +332,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
       () => { clearTimeout(timer); resolve(fallback); },
     );
   });
-}
-
-/**
- * The day's contract, if one is open. Deliberately identical every day: the value is in
- * the binary answer accumulating into a streak, not in the wording being fresh.
- */
-function buildContractBlock(date: string): string | null {
-  try {
-    const contract = queries.getContract(date);
-    if (!contract) return null;
-    const named = contract.text ? (config.language === 'ru' ? ` Назвал утром: ${contract.text}.` : ` Named in the morning: ${contract.text}.`) : '';
-    if (contract.status === 'done') {
-      return config.language === 'ru'
-        ? `--- КОНТРАКТ ДНЯ: уже засчитан сегодня${named ? '.' + named : '.'} Повторно не засчитывай и не поднимай тему. ---`
-        : `--- CONTRACT OF THE DAY: already counted today${named ? '.' + named : '.'} Do not count it again and do not raise it. ---`;
-    }
-    return config.language === 'ru'
-      ? `--- КОНТРАКТ ДНЯ (открыт): один живой контакт с человеком сегодня — звонок, голосовое, сообщение, разговор, прямая просьба.${named} Заполни поле "contract", если из записи видно, был контакт или нет. ---`
-      : `--- CONTRACT OF THE DAY (open): one live contact with a person today — a call, a voice note, a text, a conversation, a direct request.${named} Fill the "contract" field if the entry shows whether the contact happened. ---`;
-  } catch (err) {
-    logWarn('analysis.context.contract_failed', { reason: err instanceof Error ? err.message : String(err) });
-    return null;
-  }
-}
-
-/**
- * Yesterday evening's label, verbatim, awaiting a morning verdict. Passed as context only
- * so the model can catch an answer if he gives one — it must not chase him for it.
- */
-function buildLabelReviewBlock(date: string): string | null {
-  try {
-    const pending = queries.getLabelForReview(shiftLocalDate(date, -1));
-    if (!pending) return null;
-    const at = pending.said_at ? ` в ${pending.said_at}` : '';
-    return config.language === 'ru'
-      ? `--- ЯРЛЫК НА РЕВИЗИЮ: вчера${at} прозвучало «${pending.quote}». Утром об этом уже спросили. Если пользователь в этой записи так или иначе ответил — заполни "label_review". Если не ответил — null, и НЕ переспрашивай. ---`
-      : `--- LABEL FOR REVIEW: yesterday${pending.said_at ? ` at ${pending.said_at}` : ''} he said "${pending.quote}". He was already asked this morning. If he answered in this entry in any way — fill "label_review". If not — null, and do NOT re-ask. ---`;
-  } catch (err) {
-    logWarn('analysis.context.label_failed', { reason: err instanceof Error ? err.message : String(err) });
-    return null;
-  }
 }
 
 /**
@@ -584,12 +421,6 @@ export async function buildUserPromptWithContext(
         : `[Entry time: ${entryTime}]`);
     }
   }
-
-  const contractBlock = buildContractBlock(date);
-  if (contractBlock) sections.push(contractBlock);
-
-  const labelBlock = buildLabelReviewBlock(date);
-  if (labelBlock) sections.push(labelBlock);
 
   const intentionsBlock = buildYesterdayIntentionsBlock(yesterday);
   if (intentionsBlock) sections.push(intentionsBlock);
@@ -734,10 +565,11 @@ export async function analyzeEntry(
       outputChars: result.text.length,
     });
   }
+  capSayInsteadPerDay(entryDate, entryId, parsedResponse.parsed);
 
   const metrics = saveAnalysis(entryId, parsedResponse, llm);
   const dailyMemorySaved = saveDailyMemorySummary(entryDate, entryId, parsedResponse.parsed, llm);
-  const { contractCounted } = applyDailySignals(entryId, entryDate, parsedResponse.parsed);
+  applyDailySignals(entryId, entryDate, parsedResponse.parsed);
 
   // Save analysis as assistant message in thread
   const freeform = parsedResponse.freeform;
@@ -751,10 +583,8 @@ export async function analyzeEntry(
 
   // No technical header: it used to occupy the first line, which is the only part visible in
   // the notification preview, and spent it on the cost of the API call.
-  const contractAsk = buildContractAsk(entryDate);
   const rendered = renderAnalysisMessage(freeform, parsedResponse.parsed, metrics);
-  const outgoing = contractAsk ? `${rendered}\n\n${contractAsk.text}` : rendered;
-  await sendRawHtmlMessages(api, chatId, outgoing, replyToMessageId, { keyboard: contractAsk?.keyboard });
+  await sendRawHtmlMessages(api, chatId, rendered, replyToMessageId);
   logInfo('llm.analysis.complete', {
     chatId,
     entryId,
@@ -770,7 +600,6 @@ export async function analyzeEntry(
     dailyMemorySaved,
     thoughtRecord: !!parsedResponse.parsed?.thought_record,
     closingQuestion: !!parsedResponse.parsed?.closing_question,
-    contractCounted,
     inputTokens: result.usage?.inputTokens,
     outputTokens: result.usage?.outputTokens,
     costUsd: result.usage?.costUsd?.toFixed(5),
@@ -828,6 +657,7 @@ async function analyzeCompare(
           outputChars: result.text.length,
         });
       }
+      capSayInsteadPerDay(entryDate, entryId, parsedResponse.parsed);
       const metrics = saveAnalysis(entryId, parsedResponse, llm);
 
       if (!threadSaved) {
@@ -840,7 +670,7 @@ async function analyzeCompare(
       // Behavioural signals are recorded only once per entry (first successful provider).
       if (!threadSaved) {
         const dailyMemorySaved = saveDailyMemorySummary(entryDate, entryId, parsedResponse.parsed, llm);
-        const { contractCounted } = applyDailySignals(entryId, entryDate, parsedResponse.parsed);
+        applyDailySignals(entryId, entryDate, parsedResponse.parsed);
         queries.insertThreadMessage({
           thread_id: threadId,
           role: 'assistant',
@@ -855,7 +685,6 @@ async function analyzeCompare(
           provider: llm.providerName,
           model: llm.modelName,
           saved: dailyMemorySaved,
-          contractCounted,
         });
       }
       const meta = `<blockquote>${label} | ${elapsed}s${formatUsage(result.usage)}</blockquote>`;

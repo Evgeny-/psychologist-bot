@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="620" viewBox="0 0 820 620" role="img" aria-labelledby="title desc">
+<title id="title">A daily voice note and a conversation</title>
+<desc id="desc">An illustrated voice diary. A voice note describes a difficult meeting followed by a walk. The bot asks what changed during the walk. The conversation is fictional.</desc>
+<rect width="820" height="620" fill="#eef3f6"/>
+<g transform="translate(0,-198)" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+  <rect x="118" y="230" width="660" height="331" rx="24" fill="#d8ebfc"/>
+  <text x="153" y="275" font-size="22" font-weight="600" fill="#396b96">Your daily voice note</text>
+  <circle cx="193" cy="324" r="35" fill="#3d84ba"/>
+  <path d="m185 308 24 16-24 16Z" fill="#fff"/>
+  <g fill="none" stroke="#3d84ba" stroke-width="5" stroke-linecap="round"><path d="M266 316.0v12"/><path d="M276 311.0v22"/><path d="M286 305.0v34"/><path d="M296 312.0v20"/><path d="M306 301.0v42"/><path d="M316 292.0v60"/><path d="M326 303.0v38"/><path d="M336 309.0v26"/><path d="M346 300.0v44"/><path d="M356 295.0v54"/><path d="M366 305.0v34"/><path d="M376 314.0v16"/><path d="M386 310.0v24"/><path d="M396 301.0v42"/><path d="M406 294.0v56"/><path d="M416 306.0v32"/><path d="M426 312.0v20"/><path d="M436 302.0v40"/><path d="M446 291.0v62"/><path d="M456 299.0v46"/><path d="M466 307.0v30"/><path d="M476 313.0v18"/><path d="M486 304.0v36"/><path d="M496 296.0v52"/><path d="M506 308.0v28"/><path d="M516 314.0v16"/><path d="M526 310.0v24"/><path d="M536 299.0v46"/><path d="M546 305.0v34"/><path d="M556 313.0v18"/><path d="M566 316.0v12"/><path d="M576 308.0v28"/><path d="M586 302.0v40"/><path d="M596 311.0v22"/><path d="M606 315.0v14"/><path d="M616 307.0v30"/><path d="M626 300.0v44"/><path d="M636 309.0v26"/></g>
+  <text x="266" y="379" font-size="20" fill="#537995">2:14</text>
+  <text x="153" y="437" font-size="28" fill="#243c50">“I had a rough meeting today.</text>
+  <text x="153" y="478" font-size="28" fill="#243c50">But I went for a walk afterwards</text>
+  <text x="153" y="519" font-size="28" fill="#243c50">and felt a bit lighter.”</text>
+  <rect x="42" y="597" width="675" height="180" rx="24" fill="#fff"/>
+  <text x="77" y="643" font-size="22" font-weight="600" fill="#396b96">psychologist-bot</text>
+  <text x="77" y="699" font-size="29" fill="#26343f">What changed for you</text>
+  <text x="77" y="743" font-size="29" fill="#26343f">when you went for that walk?</text>
+</g>
+</svg>

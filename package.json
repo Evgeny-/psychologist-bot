@@ -12,7 +12,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Talk through your day in a Telegram voice note. Get CBT reflections and letters that draw on earlier entries.",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
     "@resvg/resvg-js": "^2.6.2",
